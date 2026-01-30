@@ -1,0 +1,2896 @@
+import puppeteer from 'puppeteer';
+import dotenv from 'dotenv';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import { existsSync } from 'fs';
+
+dotenv.config();
+
+class LinkedInScraper {
+  constructor() {
+    this.browser = null;
+    this.page = null;
+    this.cookiesFile = 'linkedin_cookies.json';
+  }
+
+  async init() {
+    console.log('Iniciando navegador...');
+    this.browser = await puppeteer.launch({
+      headless: false, // Cambiar a true para modo sin interfaz gráfica
+      defaultViewport: null,
+      args: ['--start-maximized']
+    });
+    this.page = await this.browser.newPage();
+    
+    // Configurar user agent para parecer más humano
+    await this.page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
+    
+    // Cargar cookies guardadas si existen
+    await this.loadCookies();
+  }
+
+  // Guardar cookies de la sesión
+  async saveCookies() {
+    try {
+      // Verificar que la página y el navegador estén disponibles
+      if (!this.page || !this.browser) {
+        return;
+      }
+      
+      // Verificar que la página no esté cerrada
+      if (this.page.isClosed()) {
+        return;
+      }
+      
+      // Intentar obtener cookies con timeout
+      const cookies = await Promise.race([
+        this.page.cookies(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+      ]);
+      
+      if (cookies && cookies.length > 0) {
+        fs.writeFileSync(this.cookiesFile, JSON.stringify(cookies, null, 2), 'utf-8');
+        console.log('✓ Cookies guardadas');
+      }
+    } catch (error) {
+      // Ignorar errores silenciosamente si el navegador está cerrando
+      if (!error.message.includes('Target closed') && 
+          !error.message.includes('Session closed') &&
+          !error.message.includes('Requesting main frame too early')) {
+        // Solo mostrar errores que no sean relacionados con el cierre del navegador
+        console.log('⚠ No se pudieron guardar las cookies (navegador cerrando)');
+      }
+    }
+  }
+
+  // Cargar cookies guardadas
+  async loadCookies() {
+    try {
+      if (existsSync(this.cookiesFile)) {
+        const cookies = JSON.parse(fs.readFileSync(this.cookiesFile, 'utf-8'));
+        await this.page.setCookie(...cookies);
+        console.log('✓ Cookies cargadas desde sesión anterior');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.log('No se encontraron cookies guardadas o error al cargarlas');
+      return false;
+    }
+  }
+
+  // Verificar si la sesión está activa
+  async isSessionActive() {
+    try {
+      // Ir a la página principal de LinkedIn
+      await this.page.goto('https://www.linkedin.com/feed', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000
+      });
+
+      await this.page.waitForTimeout(2000);
+
+      // Verificar si estamos logueados (no en checkpoint/verificación)
+      const currentUrl = this.page.url();
+      if (currentUrl.includes('/checkpoint/')) return false;
+      const hasSearchBar = await this.page.$('input[aria-label*="Buscar"]') !== null;
+      const hasNavBar = await this.page.$('nav[role="navigation"]') !== null;
+      const isOnFeed = currentUrl.includes('feed') || currentUrl.includes('mynetwork');
+      const notOnLogin = !currentUrl.includes('/login');
+
+      return (isOnFeed || hasSearchBar || hasNavBar) && notOnLogin;
+    } catch (error) {
+      console.log('Error verificando sesión:', error.message);
+      return false;
+    }
+  }
+
+  async login(email, password) {
+    try {
+      console.log('Iniciando sesión en LinkedIn...');
+      await this.page.goto('https://www.linkedin.com/login', {
+        waitUntil: 'domcontentloaded',
+        timeout: 90000
+      });
+
+      // Esperar a que la página cargue completamente
+      await this.page.waitForTimeout(2000);
+
+      // Esperar y llenar el formulario de login con múltiples selectores posibles
+      const usernameSelector = '#username, input[name="session_key"]';
+      const passwordSelector = '#password, input[name="session_password"]';
+      
+      await this.page.waitForSelector(usernameSelector, { timeout: 30000 });
+      await this.page.waitForSelector(passwordSelector, { timeout: 30000 });
+      
+      // Limpiar campos y escribir con delays para parecer más humano
+      await this.page.click(usernameSelector);
+      await this.page.keyboard.down('Control');
+      await this.page.keyboard.press('KeyA');
+      await this.page.keyboard.up('Control');
+      await this.page.type(usernameSelector, email, { delay: 100 });
+      
+      await this.page.waitForTimeout(500);
+      
+      await this.page.click(passwordSelector);
+      await this.page.keyboard.down('Control');
+      await this.page.keyboard.press('KeyA');
+      await this.page.keyboard.up('Control');
+      await this.page.type(passwordSelector, password, { delay: 100 });
+      
+      await this.page.waitForTimeout(1000);
+      
+      // Hacer clic en el botón de login
+      const submitButton = 'button[type="submit"], button[data-litms-control-urn="login-submit"]';
+      await this.page.waitForSelector(submitButton, { timeout: 10000 });
+      await this.page.click(submitButton);
+      
+      console.log('Esperando respuesta del servidor...');
+      
+      // Esperar a que la navegación se complete o detectar cambios en la URL
+      try {
+        await Promise.race([
+          this.page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }),
+          this.page.waitForSelector('input[aria-label*="Buscar"]', { timeout: 60000 }),
+          this.page.waitForSelector('nav[role="navigation"]', { timeout: 60000 })
+        ]);
+      } catch (navError) {
+        // Si hay timeout, verificar si ya estamos logueados
+        console.log('Timeout en navegación, verificando estado...');
+      }
+      
+      await this.page.waitForTimeout(3000);
+      
+      // Verificar si el login fue exitoso
+      const currentUrl = this.page.url();
+      console.log(`URL actual: ${currentUrl}`);
+      
+      // LinkedIn puede redirigir a verificación de seguridad (checkpoint) - NO es login exitoso
+      const isCheckpoint = currentUrl.includes('/checkpoint/');
+      const pageTitle = await this.page.title().catch(() => '');
+      const isSecurityVerification = pageTitle.includes('Verificación de seguridad');
+      
+      if (isCheckpoint || isSecurityVerification) {
+        console.log('⚠ LinkedIn está solicitando verificación de seguridad (p. ej. escaneo o comprobación).');
+        console.log('Complétala en el navegador. Comprobando cada 15 s hasta 5 minutos...');
+        const maxWaitMs = 5 * 60 * 1000;   // 5 minutos
+        const checkIntervalMs = 15 * 1000;  // 15 segundos
+        const start = Date.now();
+        while (Date.now() - start < maxWaitMs) {
+          await this.page.waitForTimeout(checkIntervalMs);
+          const newUrl = this.page.url();
+          const newTitle = await this.page.title().catch(() => '');
+          if (!newUrl.includes('/checkpoint/') && !newTitle.includes('Verificación de seguridad')) {
+            console.log('✓ Verificación completada. Login exitoso.');
+            await this.saveCookies();
+            return true;
+          }
+          const restante = Math.ceil((maxWaitMs - (Date.now() - start)) / 60000);
+          console.log(`   Esperando... (hasta ${restante} min restantes)`);
+        }
+        console.log('✗ Tiempo agotado. Vuelve a ejecutar cuando hayas completado la verificación.');
+        return false;
+      }
+      
+      // Verificar múltiples indicadores de login exitoso (excluyendo checkpoint)
+      const isLoggedIn = (currentUrl.includes('feed') || 
+                        currentUrl.includes('mynetwork') ||
+                        currentUrl.includes('/in/') ||
+                        !currentUrl.includes('/login')) && !isCheckpoint;
+      
+      // Verificar también por elementos de la página principal
+      const hasSearchBar = await this.page.$('input[aria-label*="Buscar"]') !== null;
+      const hasNavBar = await this.page.$('nav[role="navigation"]') !== null;
+      
+      if (isLoggedIn || hasSearchBar || hasNavBar) {
+        console.log('✓ Login exitoso');
+        // Guardar cookies después de login exitoso
+        await this.saveCookies();
+        return true;
+      } else {
+        // Verificar si hay CAPTCHA o desafío
+        const hasCaptcha = await this.page.$('iframe[title*="challenge"]') !== null ||
+                          await this.page.$('div[class*="challenge"]') !== null;
+        
+        if (hasCaptcha) {
+          console.log('⚠ LinkedIn está solicitando verificación (CAPTCHA). Por favor, resuélvelo manualmente en el navegador.');
+          console.log('Esperando 30 segundos para que resuelvas el CAPTCHA...');
+          await this.page.waitForTimeout(30000);
+          
+          // Verificar nuevamente después del delay
+          const newUrl = this.page.url();
+          if ((newUrl.includes('feed') || newUrl.includes('mynetwork') || !newUrl.includes('/login')) && !newUrl.includes('/checkpoint/')) {
+            console.log('✓ Login exitoso después de la verificación');
+            // Guardar cookies después de login exitoso
+            await this.saveCookies();
+            return true;
+          }
+        }
+        
+        console.log('✗ Error en el login. Verifica tus credenciales o resuelve el CAPTCHA manualmente.');
+        return false;
+      }
+    } catch (error) {
+      console.error('Error durante el login:', error.message);
+      console.log('Verifica que las credenciales sean correctas y que no haya CAPTCHA.');
+      return false;
+    }
+  }
+
+  async searchPerson(name, options = {}) {
+    try {
+      const { 
+        filterKeywords = null, // Array de palabras clave para filtrar
+        getFullDetails = false, // Obtener detalles completos automáticamente
+        maxResults = 25 // Máximo de resultados a obtener
+      } = options;
+      
+      console.log(`Buscando: ${name}...`);
+      if (filterKeywords && filterKeywords.length > 0) {
+        console.log(`Filtros aplicados: ${filterKeywords.join(', ')}`);
+      }
+      
+      // Ir a la página de búsqueda con parámetros de navegación normal
+      // La búsqueda es flexible: puede ser solo nombre, nombre completo, etc.
+      const searchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(name)}&origin=SWITCH_SEARCH_VERTICAL`;
+      await this.page.goto(searchUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 90000
+      });
+
+      // Verificar que estamos en la página correcta (no en verificación de seguridad)
+      const currentUrl = this.page.url();
+      console.log(`URL actual: ${currentUrl}`);
+      
+      if (currentUrl.includes('/checkpoint/')) {
+        const pageTitle = await this.page.title().catch(() => '');
+        if (pageTitle.includes('Verificación de seguridad')) {
+          console.log('⚠ LinkedIn redirigió a verificación de seguridad. Complétala en el navegador.');
+          console.log('Comprobando cada 15 s hasta 5 minutos...');
+          const maxWaitMs = 5 * 60 * 1000;
+          const checkIntervalMs = 15 * 1000;
+          const start = Date.now();
+          let superado = false;
+          while (Date.now() - start < maxWaitMs) {
+            await this.page.waitForTimeout(checkIntervalMs);
+            const newUrl = this.page.url();
+            const newTitle = await this.page.title().catch(() => '');
+            if (!newUrl.includes('/checkpoint/') && !newTitle.includes('Verificación de seguridad')) {
+              superado = true;
+              console.log('✓ Verificación completada.');
+              break;
+            }
+            const restante = Math.ceil((maxWaitMs - (Date.now() - start)) / 60000);
+            console.log(`   Esperando... (hasta ${restante} min restantes)`);
+          }
+          if (!superado) {
+            console.log('✗ Tiempo agotado. No se pueden obtener resultados.');
+            return [];
+          }
+          // Reintentar la búsqueda tras superar el checkpoint
+          await this.page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+          await this.page.waitForTimeout(3000);
+        }
+      }
+      
+      // Esperar a que carguen los resultados con múltiples selectores posibles
+      console.log('Esperando a que carguen los resultados...');
+      try {
+        await Promise.race([
+          this.page.waitForSelector('div[data-view-name="people-search-result"]', { timeout: 15000 }),
+          this.page.waitForSelector('.search-results-container', { timeout: 15000 }),
+          this.page.waitForSelector('.reusable-search__result-container', { timeout: 15000 }),
+          this.page.waitForSelector('ul.reusable-search__entity-result-list', { timeout: 15000 }),
+          this.page.waitForSelector('[class*="search-result"]', { timeout: 15000 }),
+          this.page.waitForSelector('li[class*="result"]', { timeout: 15000 }),
+          this.page.waitForSelector('div[class*="entity-result"]', { timeout: 15000 }),
+          this.page.waitForSelector('a[data-view-name="search-result-lockup-title"]', { timeout: 15000 })
+        ]);
+        console.log('✓ Contenedor de resultados encontrado');
+      } catch (selectorError) {
+        console.log('⚠ No se encontró el contenedor esperado, continuando...');
+      }
+      
+      // Esperar un poco más para que carguen todos los elementos
+      await this.page.waitForTimeout(4000);
+      
+      // Hacer scroll para cargar más resultados
+      console.log('Haciendo scroll para cargar más resultados...');
+      await this.page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight / 3);
+      });
+      await this.page.waitForTimeout(2000);
+      await this.page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight / 2);
+      });
+      await this.page.waitForTimeout(2000);
+      await this.page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight);
+      });
+      await this.page.waitForTimeout(2000);
+
+      // Extraer información de los perfiles con múltiples selectores
+      console.log('Extrayendo información de perfiles...');
+      const profiles = await this.page.evaluate(() => {
+        const results = [];
+        // Intentar múltiples selectores para encontrar las tarjetas de perfil
+        // Usando la estructura real de LinkedIn que me mostró el usuario
+        const selectors = [
+          'div[data-view-name="people-search-result"]',
+          'div.dea36951[data-view-name="people-search-result"]',
+          'li.entity-result__item',
+          '.entity-result__item',
+          'li.reusable-search__result-container',
+          '.reusable-search__result-container',
+          'li[class*="result"]',
+          'div[class*="entity-result"]',
+          '[class*="search-result"]',
+          'li[data-chameleon-result-urn]',
+          'div[data-chameleon-result-urn]'
+        ];
+        
+        let profileCards = [];
+        let usedSelector = '';
+        for (const selector of selectors) {
+          const foundCards = document.querySelectorAll(selector);
+          if (foundCards.length > 0) {
+            // Convertir NodeList a Array
+            profileCards = Array.from(foundCards);
+            usedSelector = selector;
+            console.log(`Encontrados ${profileCards.length} elementos con selector: ${selector}`);
+            break;
+          }
+        }
+        
+        console.log(`Total de tarjetas encontradas: ${profileCards.length}`);
+        
+        // Si no encontramos nada, intentar buscar cualquier enlace a perfil
+        if (profileCards.length === 0) {
+          console.log('No se encontraron tarjetas, buscando enlaces a perfiles...');
+          const allLinks = document.querySelectorAll('a[href*="/in/"]');
+          console.log(`Enlaces a perfiles encontrados: ${allLinks.length}`);
+          
+          // Crear tarjetas virtuales desde los enlaces
+          const cardsFromLinks = [];
+          allLinks.forEach((link, index) => {
+            if (link.href && link.href.includes('/in/') && !link.href.includes('/in/feed') && !link.href.includes('/in/recruiter')) {
+              const card = link.closest('li') || link.closest('div') || link.parentElement;
+              if (card && !cardsFromLinks.includes(card)) {
+                cardsFromLinks.push(card);
+              }
+            }
+          });
+          profileCards = cardsFromLinks;
+          console.log(`Tarjetas creadas desde enlaces: ${profileCards.length}`);
+        }
+        
+        // Asegurarse de que profileCards es un array
+        if (!Array.isArray(profileCards)) {
+          profileCards = Array.from(profileCards);
+        }
+        
+        profileCards.forEach((card, index) => {
+          try {
+            // Nombre - usando la estructura real de LinkedIn
+            const nameSelectors = [
+              'a[data-view-name="search-result-lockup-title"]',
+              'a._2277ad60._043618e5[data-view-name="search-result-lockup-title"]',
+              '.entity-result__title-text a',
+              'span.entity-result__title-text a',
+              'a[href*="/in/"][aria-label]',
+              'a[href*="/in/"]',
+              '.search-result__result-link',
+              'h3 a[href*="/in/"]',
+              'div[class*="title"] a[href*="/in/"]',
+              'span[class*="title"] a[href*="/in/"]',
+              'p a[href*="/in/"]'
+            ];
+            let nameElement = null;
+            for (const sel of nameSelectors) {
+              nameElement = card.querySelector(sel);
+              if (nameElement && nameElement.innerText && nameElement.innerText.trim().length > 0) {
+                break;
+              }
+            }
+            
+            // Si no encontramos nombre, buscar cualquier enlace a perfil en la tarjeta
+            if (!nameElement || !nameElement.innerText || nameElement.innerText.trim().length === 0) {
+              const profileLink = card.querySelector('a[href*="/in/"]:not([href*="/in/feed"])');
+              if (profileLink) {
+                nameElement = profileLink;
+              }
+            }
+            
+            let name = nameElement && nameElement.innerText ? nameElement.innerText.trim() : 'N/A';
+            const profileUrl = nameElement && nameElement.href ? nameElement.href.split('?')[0] : 'N/A';
+            
+            // Si no tenemos nombre pero sí URL, intentar obtener el nombre del aria-label
+            if (name === 'N/A' && profileUrl !== 'N/A' && nameElement) {
+              const ariaLabel = nameElement.getAttribute('aria-label');
+              if (ariaLabel) {
+                const nameFromAria = ariaLabel.replace(/^Ver perfil de\s*/i, '').trim();
+                if (nameFromAria.length > 0) {
+                  name = nameFromAria;
+                }
+              }
+            }
+            
+            // Título/Posición - usando la estructura real de LinkedIn
+            const titleSelectors = [
+              'div._655037c4._185fef28.d065caac.b90d48f3.bc8cf9c8._903d2b03._2ad2a80d p.d6702861._06170c11._73af0c6b._6763f53f._7de9ee24._09f66719.f694e6fa._4972da53',
+              'p.d6702861._06170c11._73af0c6b._6763f53f._7de9ee24._09f66719.f694e6fa._4972da53',
+              'div[class*="_655037c4"] p[class*="d6702861"]',
+              '.entity-result__primary-subtitle',
+              '.search-result__snippets',
+              '[class*="subtitle"]',
+              'p[class*="_73af0c6b"]'
+            ];
+            let titleElement = null;
+            for (const sel of titleSelectors) {
+              titleElement = card.querySelector(sel);
+              // Verificar que no sea la ubicación (la ubicación suele estar en otro div)
+              if (titleElement && titleElement.innerText && titleElement.innerText.trim().length > 0) {
+                // Verificar que no sea ubicación buscando palabras comunes de ubicación
+                const text = titleElement.innerText.trim().toLowerCase();
+                if (!text.match(/^(perú|peru|lima|madrid|españa|spain|área metropolitana|metropolitan area|bacoor|filipinas)/i)) {
+                  break;
+                }
+              }
+            }
+            const title = titleElement ? titleElement.innerText.trim() : 'N/A';
+            
+            // Ubicación - usando la estructura real de LinkedIn
+            const locationSelectors = [
+              'div._655037c4._185fef28.d065caac.b90d48f3.bc8cf9c8._69a4e1af._2ad2a80d p.d6702861._06170c11._73af0c6b._6763f53f._7de9ee24._09f66719.f694e6fa._4972da53',
+              'div[class*="_69a4e1af"] p[class*="d6702861"]',
+              '.entity-result__secondary-subtitle',
+              '[class*="location"]',
+              '[class*="secondary"]'
+            ];
+            let locationElement = null;
+            for (const sel of locationSelectors) {
+              locationElement = card.querySelector(sel);
+              if (locationElement && locationElement.innerText && locationElement.innerText.trim().length > 0) {
+                break;
+              }
+            }
+            const location = locationElement ? locationElement.innerText.trim() : 'N/A';
+            
+            // Descripción - múltiples selectores
+            const descSelectors = [
+              '.entity-result__summary',
+              '.search-result__snippets',
+              '[class*="summary"]'
+            ];
+            let descriptionElement = null;
+            for (const sel of descSelectors) {
+              descriptionElement = card.querySelector(sel);
+              if (descriptionElement) break;
+            }
+            const description = descriptionElement ? descriptionElement.innerText.trim() : 'N/A';
+            
+            // Imagen de perfil - usando la estructura real de LinkedIn
+            const imageSelectors = [
+              'figure.eb03e47a img._4064e63a',
+              'img._4064e63a.dfd733ea._934440b8',
+              'img[class*="_4064e63a"]',
+              '.presence-entity__image img',
+              '.entity-result__universal-image img',
+              'img[alt*="profile"]',
+              '.search-result__image img',
+              'figure img'
+            ];
+            let imageElement = null;
+            for (const sel of imageSelectors) {
+              imageElement = card.querySelector(sel);
+              if (imageElement) break;
+            }
+            const imageUrl = imageElement ? imageElement.src : 'N/A';
+            
+            // Solo agregar si tiene al menos nombre o URL válida
+            if ((name !== 'N/A' && name.length > 0) || (profileUrl !== 'N/A' && profileUrl.includes('/in/'))) {
+              results.push({
+                nombre: name,
+                titulo: title,
+                ubicacion: location,
+                descripcion: description,
+                urlPerfil: profileUrl,
+                imagenPerfil: imageUrl
+              });
+            }
+          } catch (error) {
+            console.error(`Error procesando perfil ${index}:`, error);
+          }
+        });
+        
+        console.log(`Total de perfiles extraídos: ${results.length}`);
+        return results;
+      });
+
+      console.log(`Perfiles encontrados después de extracción: ${profiles.length}`);
+      
+      // Si no encontramos perfiles, intentar diagnóstico
+      if (profiles.length === 0) {
+        console.log('⚠ No se encontraron perfiles. Realizando diagnóstico...');
+        const diagnostic = await this.page.evaluate(() => {
+          const info = {
+            url: window.location.href,
+            title: document.title,
+            hasSearchContainer: !!document.querySelector('.search-results-container'),
+            hasReusableSearch: !!document.querySelector('.reusable-search__result-container'),
+            hasEntityResult: !!document.querySelector('.entity-result__item'),
+            allLinks: document.querySelectorAll('a[href*="/in/"]').length,
+            bodyText: document.body.innerText.substring(0, 200)
+          };
+          return info;
+        });
+        console.log('Diagnóstico:', JSON.stringify(diagnostic, null, 2));
+        
+        // Verificar si hay un mensaje de "no results"
+        const noResultsMessage = await this.page.evaluate(() => {
+          const bodyText = document.body.innerText.toLowerCase();
+          return bodyText.includes('no results') || 
+                 bodyText.includes('sin resultados') ||
+                 bodyText.includes('no encontramos') ||
+                 bodyText.includes('no encontrado');
+        });
+        
+        if (noResultsMessage) {
+          console.log('⚠ LinkedIn indica que no hay resultados para esta búsqueda.');
+        }
+      }
+
+      // Filtrar por palabras clave si se especifican
+      let filteredProfiles = profiles;
+      if (filterKeywords && filterKeywords.length > 0 && profiles.length > 0) {
+        filteredProfiles = this.filterProfilesByKeywords(profiles, filterKeywords);
+        console.log(`  Filtrados: ${filteredProfiles.length} de ${profiles.length} perfiles coinciden con las palabras clave`);
+      }
+
+      // Limitar resultados
+      console.log(`[DEBUG searchPerson] maxResults=${maxResults}, filteredProfiles.length=${filteredProfiles.length}`);
+      if (maxResults && filteredProfiles.length > maxResults) {
+        console.log(`[DEBUG searchPerson] Aplicando límite: de ${filteredProfiles.length} a ${maxResults}`);
+        filteredProfiles = filteredProfiles.slice(0, maxResults);
+      }
+
+      // Obtener detalles completos si se solicita
+      if (getFullDetails && filteredProfiles.length > 0) {
+        console.log(`  Obteniendo detalles completos de ${filteredProfiles.length} perfiles...`);
+        for (let i = 0; i < filteredProfiles.length; i++) {
+          const profile = filteredProfiles[i];
+          if (profile.urlPerfil && profile.urlPerfil !== 'N/A') {
+            try {
+              console.log(`    [${i + 1}/${filteredProfiles.length}] ${profile.nombre}`);
+              const details = await this.getProfileDetails(profile.urlPerfil);
+              if (details) {
+                profile.detallesCompletos = details;
+              }
+              // Delay entre perfiles para evitar ser bloqueado
+              if (i < filteredProfiles.length - 1) {
+                await this.page.waitForTimeout(2000);
+              }
+            } catch (error) {
+              console.log(`    ⚠ Error obteniendo detalles: ${error.message}`);
+            }
+          }
+        }
+      }
+
+      return filteredProfiles;
+    } catch (error) {
+      console.error('Error durante la búsqueda:', error.message);
+      return [];
+    }
+  }
+
+  // Filtrar perfiles por palabras clave en la descripción, título o nombre
+  filterProfilesByKeywords(profiles, keywords) {
+    if (!keywords || keywords.length === 0) {
+      return profiles;
+    }
+
+    // Normalizar palabras clave a minúsculas
+    const normalizedKeywords = keywords.map(k => k.toLowerCase().trim());
+    
+    return profiles.filter(profile => {
+      // Buscar en descripción, título, nombre y ubicación
+      const searchText = [
+        profile.descripcion || '',
+        profile.titulo || '',
+        profile.nombre || '',
+        profile.ubicacion || ''
+      ].join(' ').toLowerCase();
+
+      // Verificar si alguna palabra clave está presente
+      return normalizedKeywords.some(keyword => {
+        return searchText.includes(keyword);
+      });
+    });
+  }
+
+  async getProfileDetails(profileUrl) {
+    try {
+      console.log(`Obteniendo detalles del perfil: ${profileUrl}`);
+      await this.page.goto(profileUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000
+      });
+
+      await this.page.waitForTimeout(3000);
+
+      // Verificar que estamos en la página correcta
+      const currentUrl = this.page.url();
+      console.log(`  URL del perfil: ${currentUrl}`);
+
+      // Hacer scroll para cargar todo el contenido
+      console.log('  Cargando contenido completo del perfil...');
+      await this.page.evaluate(async () => {
+        await new Promise((resolve) => {
+          let totalHeight = 0;
+          const distance = 200;
+          let lastHeight = document.body.scrollHeight;
+          const timer = setInterval(() => {
+            window.scrollBy(0, distance);
+            totalHeight += distance;
+            const currentHeight = document.body.scrollHeight;
+
+            // Si la altura no cambia después de varios scrolls, terminamos
+            if (currentHeight === lastHeight && totalHeight > 1000) {
+              clearInterval(timer);
+              resolve();
+            } else {
+              lastHeight = currentHeight;
+            }
+
+            // Límite de seguridad
+            if (totalHeight > 10000) {
+              clearInterval(timer);
+              resolve();
+            }
+          }, 150);
+        });
+      });
+      await this.page.waitForTimeout(3000);
+
+      // Hacer clic en "Ver más" si existe para expandir secciones, especialmente experiencia
+      console.log('  Expandiendo secciones "Ver más"...');
+      try {
+        // Buscar y expandir la sección de experiencia primero
+        const experienceSection = await this.page.$('section[data-section="experience"], #experience-section, [id*="experience"]');
+        if (experienceSection) {
+          console.log('  Sección de experiencia encontrada, expandiendo...');
+          // Buscar botones "Ver más" dentro de la sección de experiencia
+          const seeMoreInExp = await this.page.evaluate((section) => {
+            const buttons = section.querySelectorAll('button[aria-label*="Ver más"], button[aria-label*="See more"], button[aria-label*="Show more"], span[aria-label*="Ver más"], span[aria-label*="See more"]');
+            return Array.from(buttons).map(btn => {
+              try {
+                btn.click();
+                return true;
+              } catch (e) {
+                return false;
+              }
+            });
+          }, experienceSection);
+          await this.page.waitForTimeout(2000);
+        }
+        
+        // Buscar y hacer clic en todos los botones "Ver más" de la página
+        const seeMoreButtons = await this.page.evaluate(() => {
+          // Selectores válidos de CSS (sin :has-text que no es CSS estándar)
+          const buttonSelectors = [
+            'button[aria-label*="Ver más"]',
+            'button[aria-label*="See more"]',
+            'button[aria-label*="Show more"]',
+            'span[aria-label*="Ver más"]',
+            'span[aria-label*="See more"]',
+            'button span:contains("Ver más")',
+            'button span:contains("See more")'
+          ];
+          
+          let allButtons = [];
+          buttonSelectors.forEach(selector => {
+            try {
+              const buttons = document.querySelectorAll(selector);
+              allButtons = allButtons.concat(Array.from(buttons));
+            } catch (e) {
+              // Ignorar selectores inválidos
+            }
+          });
+          
+          // También buscar botones por texto interno
+          const allButtonsOnPage = document.querySelectorAll('button, span[role="button"]');
+          allButtonsOnPage.forEach(btn => {
+            const text = btn.innerText || btn.textContent || '';
+            if (text.includes('Ver más') || text.includes('See more') || text.includes('Show more')) {
+              if (!allButtons.includes(btn)) {
+                allButtons.push(btn);
+              }
+            }
+          });
+          
+          let clicked = 0;
+          allButtons.forEach(btn => {
+            try {
+              if (btn.offsetParent !== null) { // Verificar que el botón sea visible
+                btn.click();
+                clicked++;
+              }
+            } catch (e) {
+              // Ignorar errores
+            }
+          });
+          return clicked;
+        });
+        
+        if (seeMoreButtons > 0) {
+          console.log(`  Expandidos ${seeMoreButtons} elementos "Ver más"`);
+        }
+        
+        await this.page.waitForTimeout(2000);
+        
+        // Hacer scroll específicamente a la sección de experiencia y expandir todas las experiencias
+        await this.page.evaluate(() => {
+          const expSection = document.querySelector('section[data-section="experience"], #experience-section');
+          if (expSection) {
+            expSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            
+            // Buscar y hacer clic en "Ver más experiencias" si existe
+            const showMoreExp = expSection.querySelector('button[aria-label*="Ver más"], button[aria-label*="See more"], button[aria-label*="Show more"]');
+            if (showMoreExp) {
+              try {
+                showMoreExp.click();
+              } catch (e) {}
+            }
+          }
+        });
+        await this.page.waitForTimeout(3000);
+        
+        // Hacer scroll dentro de la sección de experiencia para cargar todos los items
+        console.log('  Haciendo scroll dentro de la sección de experiencia...');
+        await this.page.evaluate(() => {
+          const expSection = document.querySelector('section[data-section="experience"], #experience-section');
+          if (expSection) {
+            let lastHeight = expSection.scrollHeight;
+            let scrollAttempts = 0;
+            const maxScrolls = 10;
+            
+            const scrollInterval = setInterval(() => {
+              // Scroll dentro de la sección
+              expSection.scrollTop += 500;
+              scrollAttempts++;
+              
+              // También hacer scroll de la página hacia abajo
+              window.scrollBy(0, 300);
+              
+              const currentHeight = expSection.scrollHeight;
+              
+              // Si no hay más contenido o alcanzamos el máximo, detener
+              if (currentHeight === lastHeight && scrollAttempts > 3 || scrollAttempts >= maxScrolls) {
+                clearInterval(scrollInterval);
+              } else {
+                lastHeight = currentHeight;
+              }
+            }, 500);
+            
+            // Detener después de 5 segundos
+            setTimeout(() => clearInterval(scrollInterval), 5000);
+          }
+        });
+        await this.page.waitForTimeout(3000);
+        
+        // Intentar hacer clic en "Ver más" dentro de la sección de experiencia varias veces
+        for (let i = 0; i < 3; i++) {
+          await this.page.evaluate(() => {
+            const expSection = document.querySelector('section[id="experience"], section[data-section="experience"], #experience-section');
+            if (expSection) {
+              const seeMoreButtons = expSection.querySelectorAll('button[aria-label*="Ver más"], button[aria-label*="See more"], button[aria-label*="Show more"], span[aria-label*="Ver más"], button.inline-show-more-text__button');
+              seeMoreButtons.forEach(btn => {
+                try {
+                  if (btn.offsetParent !== null) {
+                    btn.click();
+                  }
+                } catch (e) {}
+              });
+            }
+          });
+          await this.page.waitForTimeout(1500);
+        }
+        
+        // Buscar y hacer clic en "Mostrar todas las experiencias" si existe
+        console.log('  Buscando botón "Mostrar todas las experiencias"...');
+        try {
+          // Buscar el botón por ID o por texto
+          const showAllButton = await this.page.evaluate(() => {
+            // Buscar por ID
+            let button = document.querySelector('a[id="navigation-index-see-all-experiences"]');
+            if (button) return { found: true, href: button.href };
+            
+            // Buscar por href que contenga /details/experience
+            button = document.querySelector('a[href*="/details/experience"]');
+            if (button) return { found: true, href: button.href };
+            
+            // Buscar por texto
+            const allLinks = document.querySelectorAll('a');
+            for (const link of allLinks) {
+              const text = link.innerText || link.textContent || '';
+              if (text.includes('Mostrar todas las experiencias') || 
+                  text.includes('Show all experiences') ||
+                  (text.includes('experiencias') && text.match(/\d+/))) {
+                return { found: true, href: link.href };
+              }
+            }
+            return { found: false };
+          });
+          
+          if (showAllButton.found) {
+            console.log(`  Encontrado botón "Mostrar todas las experiencias", navegando a: ${showAllButton.href}`);
+            await this.page.goto(showAllButton.href, {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
+            });
+            await this.page.waitForTimeout(3000);
+            
+            // Hacer scroll en la nueva página para cargar todo
+            await this.page.evaluate(async () => {
+              await new Promise((resolve) => {
+                let totalHeight = 0;
+                const distance = 200;
+                let lastHeight = document.body.scrollHeight;
+                const timer = setInterval(() => {
+                  window.scrollBy(0, distance);
+                  totalHeight += distance;
+                  const currentHeight = document.body.scrollHeight;
+                  
+                  if (currentHeight === lastHeight && totalHeight > 1000) {
+                    clearInterval(timer);
+                    resolve();
+                  } else {
+                    lastHeight = currentHeight;
+                  }
+                  
+                  if (totalHeight > 10000) {
+                    clearInterval(timer);
+                    resolve();
+                  }
+                }, 150);
+              });
+            });
+            await this.page.waitForTimeout(2000);
+            
+            // Expandir todas las descripciones en la página de todas las experiencias
+            const clickedCount = await this.page.evaluate(() => {
+              const seeMoreButtons = document.querySelectorAll('button.inline-show-more-text__button, button[aria-label*="Ver más"], button[aria-label*="See more"]');
+              let clicked = 0;
+              seeMoreButtons.forEach(btn => {
+                try {
+                  if (btn.offsetParent !== null) {
+                    btn.click();
+                    clicked++;
+                  }
+                } catch (e) {}
+              });
+              // También buscar botones por texto
+              const allButtons = document.querySelectorAll('button');
+              allButtons.forEach(btn => {
+                const text = btn.innerText || btn.textContent || '';
+                if ((text.includes('ver más') || text.includes('See more')) && btn.offsetParent !== null) {
+                  try {
+                    btn.click();
+                    clicked++;
+                  } catch (e) {}
+                }
+              });
+              return clicked;
+            });
+            console.log(`  Expandidas ${clickedCount} descripciones`);
+            await this.page.waitForTimeout(2000);
+          } else {
+            console.log('  No se encontró botón "Mostrar todas las experiencias"');
+          }
+        } catch (e) {
+          console.log('  Error buscando botón "Mostrar todas las experiencias":', e.message);
+        }
+        
+      } catch (e) {
+        console.log('  Error expandiendo secciones:', e.message);
+      }
+      
+      await this.page.waitForTimeout(2000);
+
+      // Intentar obtener información de contacto desde el modal
+      console.log('  Intentando obtener información de contacto...');
+      let contactInfo = { email: 'N/A', telefono: 'N/A', sitioWeb: 'N/A' };
+      try {
+        // Construir la URL del modal de contacto
+        const profileSlug = profileUrl.match(/\/in\/([^\/]+)/)?.[1];
+        if (profileSlug) {
+          const contactModalUrl = `https://www.linkedin.com/in/${profileSlug}/overlay/contact-info/`;
+          console.log(`  Navegando a modal de contacto: ${contactModalUrl}`);
+          
+          // Navegar al modal de contacto
+          await this.page.goto(contactModalUrl, {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000
+          });
+          await this.page.waitForTimeout(3000);
+          
+          // Esperar a que aparezca el modal
+          try {
+            await this.page.waitForSelector('.artdeco-modal, [data-test-modal]', { timeout: 10000 });
+            console.log('  Modal de contacto encontrado');
+            
+            // Extraer información de contacto del modal
+            contactInfo = await this.page.evaluate(() => {
+              const info = { email: 'N/A', telefono: 'N/A', sitioWeb: 'N/A' };
+              
+              // Buscar la sección "Enviar email" o "Send email" específicamente
+              // Esta sección contiene el email del perfil objetivo, no el de la cuenta logueada
+              const emailSectionHeaders = document.querySelectorAll('h3.pv-contact-info__header, h3[class*="pv-contact-info__header"]');
+              let emailSection = null;
+              
+              for (const header of emailSectionHeaders) {
+                const headerText = header.innerText || header.textContent || '';
+                if (headerText.includes('Enviar email') || headerText.includes('Send email') || headerText.includes('Email')) {
+                  // Encontrar la sección padre que contiene este header
+                  emailSection = header.closest('section.pv-contact-info__contact-type') || 
+                                header.closest('section') ||
+                                header.parentElement;
+                  break;
+                }
+              }
+              
+              // Si encontramos la sección de email, buscar el enlace mailto: dentro de ella
+              if (emailSection) {
+                const emailLink = emailSection.querySelector('a[href^="mailto:"]');
+                if (emailLink) {
+                  const emailHref = emailLink.getAttribute('href');
+                  const emailMatch = emailHref.match(/mailto:(.+)/i);
+                  if (emailMatch) {
+                    info.email = emailMatch[1].trim();
+                  } else {
+                    // Si no hay match, usar el texto del enlace
+                    info.email = emailLink.innerText.trim();
+                  }
+                }
+              }
+              
+              // Si no encontramos en la sección específica, buscar todos los mailto: pero filtrar
+              // para evitar el email de la cuenta logueada (que suele estar en "Tu perfil")
+              if (info.email === 'N/A') {
+                const allEmailLinks = document.querySelectorAll('a[href^="mailto:"]');
+                for (const emailLink of allEmailLinks) {
+                  // Verificar que NO esté en la sección "Tu perfil" o "Your profile"
+                  const parentSection = emailLink.closest('section.pv-contact-info__contact-type') || 
+                                       emailLink.closest('section');
+                  if (parentSection) {
+                    const sectionText = parentSection.innerText || '';
+                    // Si NO contiene "Tu perfil" o "Your profile", es probablemente el email del perfil objetivo
+                    if (!sectionText.includes('Tu perfil') && !sectionText.includes('Your profile') && 
+                        !sectionText.includes('linkedin.com/in/')) {
+                      const emailHref = emailLink.getAttribute('href');
+                      const emailMatch = emailHref.match(/mailto:(.+)/i);
+                      if (emailMatch) {
+                        info.email = emailMatch[1].trim();
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+              
+              // Buscar teléfono en enlaces tel:
+              const phoneLinks = document.querySelectorAll('a[href^="tel:"]');
+              if (phoneLinks.length > 0) {
+                const phoneHref = phoneLinks[0].getAttribute('href');
+                const phoneMatch = phoneHref.match(/tel:(.+)/i);
+                if (phoneMatch) {
+                  info.telefono = phoneMatch[1].trim();
+                } else {
+                  info.telefono = phoneLinks[0].innerText.trim();
+                }
+              }
+              
+              // Buscar sitio web (enlaces http/https que no sean de LinkedIn)
+              const websiteLinks = document.querySelectorAll('a[href^="http"]:not([href*="linkedin.com"])');
+              if (websiteLinks.length > 0) {
+                info.sitioWeb = websiteLinks[0].href;
+              }
+              
+              // También buscar en el texto del modal
+              const modalText = document.body.innerText || '';
+              
+              // Buscar email en el texto si no lo encontramos en enlaces
+              if (info.email === 'N/A') {
+                const emailPattern = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/;
+                const emailMatch = modalText.match(emailPattern);
+                if (emailMatch) {
+                  info.email = emailMatch[1];
+                }
+              }
+              
+              // Buscar teléfono en el texto si no lo encontramos en enlaces
+              if (info.telefono === 'N/A') {
+                const phonePattern = /(\+?\d{1,3}[\s-]?)?\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}/;
+                const phoneMatch = modalText.match(phonePattern);
+                if (phoneMatch) {
+                  info.telefono = phoneMatch[0];
+                }
+              }
+              
+              return info;
+            });
+            
+            console.log(`  Información de contacto extraída: email=${contactInfo.email}, teléfono=${contactInfo.telefono}, sitio=${contactInfo.sitioWeb}`);
+            
+            // Volver a la página del perfil
+            await this.page.goto(profileUrl, {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
+            });
+            await this.page.waitForTimeout(2000);
+          } catch (modalError) {
+            console.log('  No se pudo abrir el modal de contacto o no está disponible');
+            // Volver a la página del perfil si falla
+            await this.page.goto(profileUrl, {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
+            });
+            await this.page.waitForTimeout(2000);
+          }
+        }
+      } catch (contactError) {
+        console.log(`  Error obteniendo información de contacto: ${contactError.message}`);
+        // Asegurarse de estar en la página del perfil
+        try {
+          await this.page.goto(profileUrl, {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000
+          });
+          await this.page.waitForTimeout(2000);
+        } catch (e) {
+          // Ignorar errores de navegación
+        }
+      }
+
+      // Extraer el nombre del perfil ANTES de navegar a la página de detalles
+      const profileName = await this.page.evaluate(() => {
+        const nameSelectors = [
+          'h1.text-heading-xlarge',
+          'h1[class*="text-heading-xlarge"]',
+          '.pv-text-details__left-panel h1',
+          'main h1',
+          '.ph5 h1',
+          'h1'
+        ];
+        for (const selector of nameSelectors) {
+          const element = document.querySelector(selector);
+          if (element && element.innerText && element.innerText.trim()) {
+            return element.innerText.trim();
+          }
+        }
+        return null;
+      });
+      
+      console.log(`  Nombre del perfil extraído: ${profileName || 'No encontrado'}`);
+
+      // Experiencia laboral desde la ruta /details/experience/ (estructura oficial de LinkedIn)
+      let experienceFromDetailsPage = [];
+      try {
+        const baseProfileUrl = profileUrl.replace(/\?.*$/, '').replace(/\/$/, '');
+        const experienceDetailsUrl = `${baseProfileUrl}/details/experience/`;
+        console.log(`  Obteniendo experiencia desde: ${experienceDetailsUrl}`);
+        await this.page.goto(experienceDetailsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await this.page.waitForTimeout(3000);
+        // Esperar lista de experiencias (DOM de la página details/experience)
+        await this.page.waitForSelector('li.pvs-list__paged-list-item, div[data-view-name="profile-component-entity"]', { timeout: 10000 }).catch(() => null);
+        await this.page.waitForTimeout(1500);
+        // Scroll para cargar todas las experiencias
+        await this.page.evaluate(() => {
+          const content = document.querySelector('.scaffold-finite-scroll__content');
+          if (content) {
+            let h = 0;
+            const iv = setInterval(() => {
+              window.scrollBy(0, 300);
+              h += 300;
+              if (h > 5000) clearInterval(iv);
+            }, 200);
+            setTimeout(() => clearInterval(iv), 4000);
+          }
+        });
+        await this.page.waitForTimeout(2000);
+        experienceFromDetailsPage = await this.page.evaluate(() => {
+          const results = [];
+          const items = document.querySelectorAll('li.pvs-list__paged-list-item');
+          items.forEach((li) => {
+            const entity = li.querySelector('div[data-view-name="profile-component-entity"]') || li;
+            const getText = (sel, def = 'N/A') => {
+              const el = entity.querySelector(sel);
+              return el && el.innerText && el.innerText.trim() ? el.innerText.trim() : def;
+            };
+            const puesto = getText('.mr1.hoverable-link-text.t-bold span[aria-hidden="true"]') || getText('.t-bold span[aria-hidden="true"]') || getText('.hoverable-link-text.t-bold span[aria-hidden="true"]');
+            const captionEl = entity.querySelector('.pvs-entity__caption-wrapper');
+            const periodo = captionEl && captionEl.innerText ? captionEl.innerText.trim() : 'N/A';
+            const companyEl = entity.querySelector('span.t-14.t-normal:not(.t-black--light) span[aria-hidden="true"]');
+            let empresa = 'N/A';
+            if (companyEl && companyEl.innerText) {
+              empresa = companyEl.innerText.trim();
+              if (empresa.includes('·')) empresa = empresa.split('·')[0].trim();
+              if (empresa.length > 150) empresa = empresa.substring(0, 150);
+            }
+            const blackLightSpans = entity.querySelectorAll('span.t-14.t-normal.t-black--light span[aria-hidden="true"], span.t-14.t-normal.t-black--light');
+            let ubicacion = 'N/A';
+            for (const sp of blackLightSpans) {
+              const t = (sp.innerText || sp.textContent || '').trim();
+              if (t && !t.match(/\d{4}|años|meses|actualidad|actual|present/i) && t.length < 150) {
+                ubicacion = t;
+                break;
+              }
+            }
+            const subComp = entity.querySelector('.pvs-entity__sub-components');
+            let descripcion = 'N/A';
+            if (subComp) {
+              const descEl = subComp.querySelector('.t-14.t-normal.t-black span[aria-hidden="true"], .t-14.t-normal.t-black, [class*="t-normal"][class*="t-black"] span[aria-hidden="true"]');
+              if (descEl && descEl.innerText && descEl.innerText.trim().length > 10) descripcion = descEl.innerText.trim();
+            }
+            if (puesto && puesto !== 'N/A') {
+              results.push({ puesto, empresa, periodo, ubicacion, descripcion, duracion: 'N/A', tipoEmpleo: 'N/A' });
+            }
+          });
+          return results;
+        });
+        console.log(`  Experiencia extraída desde details/experience: ${experienceFromDetailsPage.length} entradas`);
+        await this.page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await this.page.waitForTimeout(2000);
+      } catch (expErr) {
+        console.log(`  No se pudo obtener experiencia desde details/experience: ${expErr.message}`);
+        try {
+          await this.page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          await this.page.waitForTimeout(1500);
+        } catch (e) {}
+      }
+
+      const profileData = await this.page.evaluate((savedName, contactInfoFromModal) => {
+        const data = {};
+        
+        // Función auxiliar para extraer texto con múltiples selectores
+        const getText = (selectors, defaultText = 'N/A') => {
+          if (typeof selectors === 'string') selectors = [selectors];
+          for (const selector of selectors) {
+            const element = document.querySelector(selector);
+            if (element && element.innerText && element.innerText.trim()) {
+              return element.innerText.trim();
+            }
+          }
+          return defaultText;
+        };
+
+        const getAllText = (selectors, defaultText = 'N/A') => {
+          if (typeof selectors === 'string') selectors = [selectors];
+          for (const selector of selectors) {
+            const elements = document.querySelectorAll(selector);
+            if (elements.length > 0) {
+              return Array.from(elements).map(el => el.innerText.trim()).filter(t => t).join(' ');
+            }
+          }
+          return defaultText;
+        };
+        
+        // Nombre completo - usar el nombre guardado o buscar en la página actual
+        if (savedName) {
+          data.nombreCompleto = savedName;
+        } else {
+          // Buscar en la página actual (puede ser la página de detalles)
+          data.nombreCompleto = getText([
+            'h1.text-heading-xlarge',
+            'h1[class*="text-heading-xlarge"]',
+            '.pv-text-details__left-panel h1',
+            'main h1',
+            '.ph5 h1',
+            'h1',
+            // En la página de detalles, buscar en breadcrumb o header
+            '.global-nav__me-photo',
+            'nav a[href*="/in/"]',
+            '.artdeco-breadcrumbs a[href*="/in/"]'
+          ]);
+          
+          // Si aún no encontramos, intentar extraer de la URL
+          if (data.nombreCompleto === 'N/A') {
+            const urlMatch = window.location.href.match(/\/in\/([^\/]+)/);
+            if (urlMatch) {
+              // Convertir slug a nombre (aproximado)
+              const slug = urlMatch[1];
+              data.nombreCompleto = slug.split('-').map(word => 
+                word.charAt(0).toUpperCase() + word.slice(1)
+              ).join(' ');
+            }
+          }
+        }
+        
+        // Título/Headline - múltiples selectores
+        data.headline = getText([
+          '.text-body-medium.break-words',
+          '.pv-text-details__left-panel .text-body-medium',
+          '[class*="headline"]',
+          '.pv-top-card__headline',
+          '.text-body-medium'
+        ]);
+        
+        // Ubicación - múltiples selectores
+        data.ubicacion = getText([
+          '.text-body-small.inline.t-black--light.break-words',
+          '.pv-text-details__left-panel .text-body-small',
+          '[class*="location"]',
+          '.pv-top-card__location',
+          '.text-body-small'
+        ]);
+        
+        // Información de contacto - usar la información del modal si está disponible
+        data.contacto = {
+          email: contactInfoFromModal?.email || 'N/A',
+          telefono: contactInfoFromModal?.telefono || 'N/A',
+          sitioWeb: contactInfoFromModal?.sitioWeb || 'N/A'
+        };
+        
+        // Si no obtuvimos información del modal, intentar buscar en la página
+        if (data.contacto.email === 'N/A' || data.contacto.telefono === 'N/A' || data.contacto.sitioWeb === 'N/A') {
+          const contactSection = document.querySelector('#top-card-text-details-contact-info, [id*="contact"]');
+          if (contactSection) {
+            const contactText = contactSection.innerText;
+            
+            // Intentar extraer email si no lo tenemos
+            if (data.contacto.email === 'N/A') {
+              const emailMatch = contactText.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/);
+              if (emailMatch) {
+                data.contacto.email = emailMatch[1];
+              }
+            }
+            
+            // Intentar extraer teléfono si no lo tenemos
+            if (data.contacto.telefono === 'N/A') {
+              const phoneMatch = contactText.match(/(\+?\d{1,3}[\s-]?)?\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}/);
+              if (phoneMatch) {
+                data.contacto.telefono = phoneMatch[0];
+              }
+            }
+            
+            // Sitio web si no lo tenemos
+            if (data.contacto.sitioWeb === 'N/A') {
+              const websiteLink = contactSection.querySelector('a[href^="http"]:not([href*="linkedin.com"])');
+              if (websiteLink) {
+                data.contacto.sitioWeb = websiteLink.href;
+              }
+            }
+          }
+        }
+        
+        // Acerca de (descripción completa) - buscar en múltiples lugares
+        const aboutSelectors = [
+          '#about ~ .display-flex .inline-show-more-text',
+          '#about ~ .pvs-list .inline-show-more-text',
+          '[id="about"] + * .inline-show-more-text',
+          '[data-section="summary"] .inline-show-more-text',
+          'section[data-section="summary"] .inline-show-more-text',
+          'section[data-section="summary"] .pv-shared-text-with-see-more',
+          '#about-section .inline-show-more-text',
+          '#about-section .pv-shared-text-with-see-more',
+          '[id*="about"] .inline-show-more-text',
+          '[id*="about"] .pv-shared-text-with-see-more'
+        ];
+        data.acercaDe = 'N/A';
+        for (const selector of aboutSelectors) {
+          const aboutElement = document.querySelector(selector);
+          if (aboutElement && aboutElement.innerText && aboutElement.innerText.trim()) {
+            data.acercaDe = aboutElement.innerText.trim();
+            break;
+          }
+        }
+        
+        // Si no encontramos "Acerca de", buscar cualquier texto descriptivo en la sección
+        if (data.acercaDe === 'N/A') {
+          const aboutSection = document.querySelector('section[data-section="summary"], #about-section, [id*="about"]');
+          if (aboutSection) {
+            const aboutText = aboutSection.innerText.trim();
+            if (aboutText && aboutText.length > 20) {
+              data.acercaDe = aboutText;
+            }
+          }
+        }
+        
+        // Experiencia laboral detallada - usando la estructura real de LinkedIn
+        console.log('Buscando sección de experiencia...');
+        
+        // Verificar si estamos en la página de detalles de experiencia
+        const isExperienceDetailsPage = window.location.href.includes('/details/experience');
+        console.log(`¿Estamos en página de detalles de experiencia? ${isExperienceDetailsPage}`);
+        
+        const experienceSelectors = [
+          'section[id="experience"]',
+          'section.artdeco-card[id="experience"]',
+          'section[data-section="experience"]',
+          '#experience',
+          '#experience-section',
+          'section.pv-profile-card[id*="experience"]'
+        ];
+        
+        let experienceSection = null;
+        for (const selector of experienceSelectors) {
+          experienceSection = document.querySelector(selector);
+          if (experienceSection) {
+            console.log(`Sección de experiencia encontrada con selector: ${selector}`);
+            break;
+          }
+        }
+        
+        // Si estamos en la página de detalles y no encontramos la sección, buscar en main
+        if (!experienceSection && isExperienceDetailsPage) {
+          // En la página de detalles, las experiencias están directamente en main
+          experienceSection = document.querySelector('main, .core-rail, [role="main"]');
+          if (!experienceSection) {
+            // Si no encontramos main, usar el body
+            experienceSection = document.body;
+          }
+          console.log('Buscando en página de detalles de experiencia (main/core-rail/body)...');
+        }
+        
+        data.experiencia = [];
+        
+        // Si encontramos la sección, buscar items de experiencia
+        if (experienceSection) {
+          console.log('Buscando items de experiencia dentro de la sección...');
+          // Selectores basados en la estructura real de LinkedIn que me mostró el usuario
+          const itemSelectors = [
+            'li.artdeco-list__item.dTqCywpNrCuwxIaRAdkDqHdyscpXWllOOZVs',
+            'li[class*="artdeco-list__item"][class*="dTqCywpNrCuwxIaRAdkDqHdyscpXWllOOZVs"]',
+            'li.artdeco-list__item',
+            'li[class*="artdeco-list__item"]',
+            'div[data-view-name="profile-component-entity"]',
+            '.pvs-list__paged-list-item',
+            'li.pvs-list__paged-list-item',
+            '.pvs-entity'
+          ];
+          
+          let experienceItems = [];
+          let bestSelector = '';
+          let maxItems = 0;
+          
+          // Probar todos los selectores y quedarse con el que encuentre más items
+          for (const itemSel of itemSelectors) {
+            const items = experienceSection.querySelectorAll(itemSel);
+            if (items.length > maxItems) {
+              maxItems = items.length;
+              experienceItems = Array.from(items);
+              bestSelector = itemSel;
+            }
+          }
+          
+          // Si encontramos items con div, necesitamos obtener el li padre
+          if (bestSelector.includes('div[data-view-name') && experienceItems.length > 0) {
+            experienceItems = experienceItems.map(div => {
+              // Buscar el li padre
+              let parent = div.parentElement;
+              while (parent && parent.tagName !== 'LI') {
+                parent = parent.parentElement;
+              }
+              return parent || div;
+            }).filter(item => item !== null);
+          }
+          
+          if (experienceItems.length > 0) {
+            console.log(`Encontrados ${experienceItems.length} items con selector: ${bestSelector}`);
+          } else {
+            console.log('No se encontraron items en la sección, buscando en toda la página...');
+            // Si no encontramos items dentro de la sección, buscar en toda la página
+            for (const itemSel of itemSelectors) {
+              const items = document.querySelectorAll(itemSel);
+              if (items.length > maxItems) {
+                maxItems = items.length;
+                experienceItems = Array.from(items);
+                bestSelector = itemSel;
+              }
+            }
+            if (experienceItems.length > 0) {
+              console.log(`Encontrados ${experienceItems.length} items en toda la página con selector: ${bestSelector}`);
+            }
+          }
+          
+          // Si aún encontramos pocos items, buscar todos los li que tengan la estructura de experiencia
+          if (experienceItems.length <= 1) {
+            console.log('Pocos items encontrados, buscando todos los elementos li con estructura de experiencia...');
+            const allLis = experienceSection.querySelectorAll('li');
+            const validLis = Array.from(allLis).filter(li => {
+              // Verificar que tenga un div con data-view-name="profile-component-entity" o un span con puesto
+              const hasEntity = li.querySelector('div[data-view-name="profile-component-entity"]');
+              const hasTitle = li.querySelector('.t-bold span[aria-hidden="true"], .hoverable-link-text.t-bold, .mr1.hoverable-link-text.t-bold');
+              // Verificar que no sea un item de habilidades u otra cosa (debe tener empresa o período)
+              const hasCompany = li.querySelector('span.t-14.t-normal span[aria-hidden="true"]');
+              const hasPeriod = li.querySelector('.pvs-entity__caption-wrapper, span.t-14.t-normal.t-black--light');
+              // En la página de detalles, puede que no tenga empresa visible pero sí período
+              return (hasEntity || hasTitle) && (hasCompany || hasPeriod);
+            });
+            
+            if (validLis.length > experienceItems.length) {
+              experienceItems = validLis;
+              console.log(`Encontrados ${experienceItems.length} elementos li válidos con estructura de experiencia`);
+            }
+          }
+          
+          // Si estamos en la página de detalles y aún no encontramos suficientes, buscar en toda la página
+          if (experienceItems.length <= 1 && isExperienceDetailsPage) {
+            console.log('Buscando experiencias en toda la página de detalles...');
+            
+            // Buscar todos los li en la página
+            const allLisInPage = document.querySelectorAll('li.artdeco-list__item, li[class*="artdeco-list__item"], li');
+            console.log(`Total de elementos li encontrados en la página: ${allLisInPage.length}`);
+            
+            const validExpLis = Array.from(allLisInPage).filter(li => {
+              const hasEntity = li.querySelector('div[data-view-name="profile-component-entity"]');
+              const hasTitle = li.querySelector('.t-bold span[aria-hidden="true"], .hoverable-link-text.t-bold, .mr1.hoverable-link-text.t-bold, div.t-bold');
+              const hasPeriod = li.querySelector('.pvs-entity__caption-wrapper, span.t-14.t-normal.t-black--light, span.pvs-entity__caption-wrapper');
+              const hasCompany = li.querySelector('span.t-14.t-normal span[aria-hidden="true"]');
+              
+              // Debe tener título y (período o empresa) para ser una experiencia válida
+              const isValid = hasTitle && (hasPeriod || hasCompany);
+              
+              if (isValid) {
+                // Verificar que no sea un item de habilidades u otra cosa
+                const text = li.innerText || '';
+                const hasSkillsKeywords = text.match(/(aptitudes|skills|habilidades|Python.*y \d+ aptitudes)/i);
+                return !hasSkillsKeywords;
+              }
+              
+              return false;
+            });
+            
+            console.log(`Items válidos encontrados: ${validExpLis.length}`);
+            
+            if (validExpLis.length > experienceItems.length) {
+              experienceItems = validExpLis;
+              console.log(`Encontrados ${validExpLis.length} experiencias en toda la página de detalles`);
+            }
+            
+            // Si aún no encontramos suficientes, buscar por estructura de lista ul
+            if (experienceItems.length <= 1) {
+              console.log('Buscando por estructura de lista ul...');
+              const allUls = document.querySelectorAll('ul.UYYUSfQXLYGraQIHlwnWdaGiaLjmZVhpUyM, ul[class*="pvs-list"], ul');
+              for (const ul of allUls) {
+                const lis = ul.querySelectorAll('li');
+                const validLis = Array.from(lis).filter(li => {
+                  const hasTitle = li.querySelector('.t-bold, .hoverable-link-text.t-bold, div[class*="t-bold"]');
+                  const hasPeriod = li.querySelector('.pvs-entity__caption-wrapper, span[class*="t-black--light"]');
+                  return hasTitle && hasPeriod;
+                });
+                
+                if (validLis.length > experienceItems.length) {
+                  experienceItems = validLis;
+                  console.log(`Encontrados ${validLis.length} experiencias en lista ul`);
+                  break;
+                }
+              }
+            }
+          }
+          
+          // Si aún no encontramos, buscar cualquier elemento que contenga texto relacionado con experiencia
+          if (experienceItems.length === 0) {
+            console.log('Buscando elementos alternativos...');
+            const allSections = document.querySelectorAll('section, div[class*="section"]');
+            for (const section of allSections) {
+              const sectionText = section.innerText.toLowerCase();
+              if (sectionText.includes('experience') || sectionText.includes('experiencia') || sectionText.includes('work')) {
+                const items = section.querySelectorAll('li, div[class*="item"], div[class*="entity"]');
+                if (items.length > 0) {
+                  experienceItems = Array.from(items);
+                  console.log(`Encontrados ${experienceItems.length} items en sección alternativa`);
+                  break;
+                }
+              }
+            }
+          }
+          
+          console.log(`Total de items de experiencia encontrados: ${experienceItems.length}`);
+          
+          // Log detallado de cada item encontrado para debugging
+          if (experienceItems.length > 0) {
+            console.log('Items encontrados (primeros 100 caracteres de cada uno):');
+            experienceItems.slice(0, 10).forEach((item, idx) => {
+              const text = (item.innerText || '').substring(0, 100);
+              const hasTitle = item.querySelector('.t-bold, .hoverable-link-text.t-bold');
+              const hasPeriod = item.querySelector('.pvs-entity__caption-wrapper');
+              console.log(`  Item ${idx + 1}: ${text}... [Título: ${hasTitle ? 'Sí' : 'No'}, Período: ${hasPeriod ? 'Sí' : 'No'}]`);
+            });
+          }
+          
+          experienceItems.forEach((item, index) => {
+            const exp = {};
+            const itemText = item.innerText || '';
+            
+            // Función auxiliar para buscar dentro del item específico
+            const getTextInItem = (selectors, defaultText = 'N/A') => {
+              if (typeof selectors === 'string') selectors = [selectors];
+              for (const selector of selectors) {
+                const element = item.querySelector(selector);
+                if (element && element.innerText && element.innerText.trim()) {
+                  return element.innerText.trim();
+                }
+              }
+              return defaultText;
+            };
+            
+            // Título del puesto - usando la estructura real de LinkedIn
+            const titleSelectors = [
+              '.mr1.hoverable-link-text.t-bold span[aria-hidden="true"]',
+              '.hoverable-link-text.t-bold span[aria-hidden="true"]',
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'span[aria-hidden="true"].t-bold',
+              'div.t-bold span[aria-hidden="true"]',
+              '[class*="title"] span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]',
+              '.pvs-entity__summary-info h3',
+              '.pvs-entity__summary-info-v2 h3',
+              'h3'
+            ];
+            
+            exp.puesto = getTextInItem(titleSelectors);
+            
+            // Si no encontramos con selectores, intentar extraer del texto
+            if (exp.puesto === 'N/A' && itemText) {
+              const lines = itemText.split('\n').filter(l => l.trim());
+              if (lines.length > 0) {
+                exp.puesto = lines[0].trim();
+              }
+            }
+            
+            // Empresa - usando la estructura real de LinkedIn
+            // En LinkedIn, la empresa está en: <span class="t-14 t-normal"><span aria-hidden="true">Nombre Empresa · Tipo</span>
+            const companySelectors = [
+              'span.t-14.t-normal:not(.t-black--light) span[aria-hidden="true"]',
+              '.t-14.t-normal span[aria-hidden="true"]:not(.t-black--light)',
+              'span.t-14.t-normal span[aria-hidden="true"]',
+              '.pvs-entity__summary-info-v2 .t-14.t-normal:not(.t-black--light)',
+              '.pvs-entity__summary-info .t-14:not(.t-black--light)'
+            ];
+            
+            exp.empresa = getTextInItem(companySelectors);
+            
+            // Limpiar la empresa: extraer solo el nombre antes del "·" si existe
+            if (exp.empresa !== 'N/A' && exp.empresa.length > 0) {
+              // La empresa puede venir como "Nombre Empresa · Jornada completa"
+              // Extraer solo la parte antes del "·"
+              if (exp.empresa.includes('·')) {
+                exp.empresa = exp.empresa.split('·')[0].trim();
+              }
+              // Si es muy larga, tomar solo hasta el primer punto o salto de línea
+              if (exp.empresa.length > 100) {
+                exp.empresa = exp.empresa.split('.')[0].split('\n')[0].trim();
+              }
+            }
+            
+            // Si aún no encontramos empresa, buscar en el texto estructurado
+            if (exp.empresa === 'N/A' && itemText) {
+              const lines = itemText.split('\n').filter(l => l.trim() && l.trim().length > 0);
+              
+              // Buscar la empresa: generalmente está después del puesto y antes del período
+              for (let i = 1; i < Math.min(5, lines.length); i++) {
+                const line = lines[i].trim();
+                
+                // Saltar si es una fecha/período
+                if (line.match(/\d{4}/) || line.includes('·') && (line.includes('años') || line.includes('mes') || line.includes('Jornada'))) {
+                  continue;
+                }
+                
+                // Saltar si parece ser parte de la descripción (muy larga o empieza con guión/punto)
+                if (line.length > 150 || line.startsWith('-') || line.startsWith('.')) {
+                  continue;
+                }
+                
+                // Si la línea es razonablemente corta, es probablemente la empresa
+                if (line.length > 0 && line.length < 100) {
+                  // Limpiar si tiene "·"
+                  if (line.includes('·')) {
+                    exp.empresa = line.split('·')[0].trim();
+                  } else {
+                    exp.empresa = line;
+                  }
+                  break;
+                }
+              }
+            }
+            
+            // Período - usando la estructura real de LinkedIn
+            // En LinkedIn está en: <span class="t-14 t-normal t-black--light"><span class="pvs-entity__caption-wrapper" aria-hidden="true">ene. 2024 - actualidad · 2 años 1 mes</span>
+            const periodSelectors = [
+              '.pvs-entity__caption-wrapper span[aria-hidden="true"]',
+              'span.pvs-entity__caption-wrapper[aria-hidden="true"]',
+              '.t-14.t-normal.t-black--light .pvs-entity__caption-wrapper',
+              '.t-14.t-normal.t-black--light span[aria-hidden="true"]',
+              '.t-black--light span[aria-hidden="true"]',
+              'span[aria-hidden="true"].t-black--light',
+              '[class*="date"] span[aria-hidden="true"]',
+              '.pvs-entity__summary-info-v2 .t-14.t-black--light'
+            ];
+            
+            exp.periodo = getTextInItem(periodSelectors);
+            
+            // Buscar período en el texto (formato común: "ene. 2024 - actualidad · 2 años 1 mes")
+            if (exp.periodo === 'N/A' && itemText) {
+              const datePattern = /(\d{4}|\w{3}\.?\s+\d{4})\s*[-–—]\s*(\d{4}|\w{3}\.?\s+\d{4}|actualidad|actual|present)/i;
+              const dateMatch = itemText.match(datePattern);
+              if (dateMatch) {
+                exp.periodo = dateMatch[0].trim();
+              }
+            }
+            
+            // Ubicación del trabajo - usando la estructura real
+            // En LinkedIn está en: <span class="t-14 t-normal t-black--light"><span aria-hidden="true">Лима · En remoto</span>
+            const locationSelectors = [
+              'span.t-14.t-normal.t-black--light:not(.pvs-entity__caption-wrapper) span[aria-hidden="true"]',
+              '.t-14.t-normal.t-black--light span[aria-hidden="true"]:not(.pvs-entity__caption-wrapper)',
+              '[class*="location"]',
+              '[class*="job-location"]'
+            ];
+            
+            exp.ubicacion = getTextInItem(locationSelectors);
+            
+            // Limpiar ubicación si tiene "·"
+            if (exp.ubicacion !== 'N/A' && exp.ubicacion.includes('·')) {
+              exp.ubicacion = exp.ubicacion.split('·').map(p => p.trim()).join(' · ');
+            }
+            
+            // Descripción del trabajo - usando la estructura real de LinkedIn
+            // En LinkedIn está en: <div class="VmORUigAzkgzLTGxnkVRVyFoVcxTtFNsgCWW inline-show-more-text...">
+            const descSelectors = [
+              '.VmORUigAzkgzLTGxnkVRVyFoVcxTtFNsgCWW span[aria-hidden="true"]',
+              '.inline-show-more-text span[aria-hidden="true"]',
+              '.fCmKBYbtEUhIfaBlxByjDbXNQmZKBwNY .VmORUigAzkgzLTGxnkVRVyFoVcxTtFNsgCWW',
+              '.inline-show-more-text',
+              '.pv-shared-text-with-see-more',
+              '[class*="description"]',
+              '.pvs-list__outer-container .inline-show-more-text',
+              '.pvs-entity__summary-info-v2 .inline-show-more-text',
+              '.pvs-entity__extra-details'
+            ];
+            
+            exp.descripcion = 'N/A';
+            for (const descSel of descSelectors) {
+              const descElement = item.querySelector(descSel);
+              if (descElement) {
+                // Intentar obtener el texto del span[aria-hidden="true"] dentro
+                const descSpan = descElement.querySelector('span[aria-hidden="true"]');
+                const descText = descSpan ? descSpan.innerText.trim() : descElement.innerText.trim();
+                
+                // Solo usar si es una descripción real (más de 20 caracteres)
+                if (descText && descText.length > 20) {
+                  // Limpiar el texto: remover saltos de línea múltiples y espacios extra
+                  exp.descripcion = descText.replace(/\n{3,}/g, '\n\n').replace(/\s{2,}/g, ' ').trim();
+                  break;
+                }
+              }
+            }
+            
+            // Si no encontramos descripción con selectores, extraer del texto completo
+            if (exp.descripcion === 'N/A' && itemText) {
+              const lines = itemText.split('\n').filter(l => l.trim() && l.trim().length > 0);
+              
+              // Buscar la descripción: viene después del puesto, empresa y período
+              let startDescIndex = -1;
+              
+              // Encontrar dónde termina el período (línea con fecha)
+              for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                // Si encontramos un período o fecha, la descripción viene después
+                if (line.match(/\d{4}/) || line.includes('·') || (line.includes('-') && line.match(/\d/))) {
+                  startDescIndex = i + 1;
+                  break;
+                }
+              }
+              
+              // Si no encontramos período, buscar después de la empresa (si la encontramos)
+              if (startDescIndex === -1 && exp.empresa !== 'N/A') {
+                for (let i = 0; i < lines.length; i++) {
+                  if (lines[i].trim() === exp.empresa || lines[i].trim().includes(exp.empresa.substring(0, 20))) {
+                    startDescIndex = i + 1;
+                    break;
+                  }
+                }
+              }
+              
+              // Si aún no encontramos, buscar después del puesto
+              if (startDescIndex === -1 && exp.puesto !== 'N/A') {
+                for (let i = 0; i < lines.length; i++) {
+                  if (lines[i].trim() === exp.puesto || lines[i].trim().includes(exp.puesto.substring(0, 20))) {
+                    startDescIndex = i + 1;
+                    break;
+                  }
+                }
+              }
+              
+              if (startDescIndex > 0 && startDescIndex < lines.length) {
+                const descLines = lines.slice(startDescIndex);
+                // Filtrar líneas que parecen ser parte de la descripción (no son fechas ni muy cortas)
+                const validDescLines = descLines.filter(line => {
+                  const trimmed = line.trim();
+                  // Excluir líneas que son fechas, muy cortas, o que son solo la empresa
+                  return trimmed.length > 10 && 
+                         !trimmed.match(/^\d{4}/) && 
+                         !trimmed.includes('·') &&
+                         trimmed !== exp.empresa;
+                });
+                
+                if (validDescLines.length > 0) {
+                  const descText = validDescLines.join(' ').trim();
+                  // Solo usar si tiene suficiente contenido y no es solo la empresa repetida
+                  if (descText.length > 30 && !descText.startsWith(exp.empresa) && descText !== exp.empresa) {
+                    exp.descripcion = descText;
+                  }
+                }
+              }
+            }
+            
+            // Si aún no encontramos, buscar párrafos largos en el item
+            if (exp.descripcion === 'N/A') {
+              const paragraphs = item.querySelectorAll('p, div[class*="text"], li[class*="description"]');
+              for (const p of paragraphs) {
+                const text = p.innerText.trim();
+                // Solo usar si es suficientemente largo y no es el puesto o empresa
+                if (text.length > 50 && text !== exp.puesto && !text.includes(exp.empresa)) {
+                  exp.descripcion = text;
+                  break;
+                }
+              }
+            }
+            
+            // Duración
+            const durationElement = item.querySelector('[class*="duration"]');
+            exp.duracion = durationElement ? durationElement.innerText.trim() : 'N/A';
+            
+            // Tipo de empleo (tiempo completo, parcial, etc.)
+            const employmentType = itemText.match(/(Tiempo completo|Tiempo parcial|Contrato|Freelance|Full-time|Part-time|Contract|Freelance|Intern|Pasantía)/i);
+            exp.tipoEmpleo = employmentType ? employmentType[1] : 'N/A';
+            
+            // Solo agregar si tiene al menos puesto o empresa válidos
+            if ((exp.puesto !== 'N/A' && exp.puesto.length > 0) || (exp.empresa !== 'N/A' && exp.empresa.length > 0)) {
+              // Verificar que no sea un duplicado (mismo puesto y empresa)
+              const isDuplicate = data.experiencia.some(existing => 
+                existing.puesto === exp.puesto && existing.empresa === exp.empresa
+              );
+              
+              if (!isDuplicate) {
+                data.experiencia.push(exp);
+                console.log(`  Experiencia ${data.experiencia.length}: ${exp.puesto} en ${exp.empresa !== 'N/A' ? exp.empresa.substring(0, 30) : 'N/A'}`);
+              }
+            } else {
+              console.log(`  Item ${index + 1} descartado: sin puesto ni empresa válidos`);
+            }
+          });
+          
+          console.log(`Total de experiencias procesadas: ${data.experiencia.length} de ${experienceItems.length} items`);
+        }
+        
+        // Si aún no encontramos experiencia, intentar método alternativo más agresivo
+        if (data.experiencia.length === 0) {
+          console.log('Intentando método alternativo para extraer experiencia...');
+          
+          // Buscar por ID o data-section
+          const altSelectors = [
+            '[id="experience"]',
+            '[id*="experience"]',
+            '[data-section="experience"]',
+            'section:has([id*="experience"])',
+            'div:has([id*="experience"])'
+          ];
+          
+          for (const altSel of altSelectors) {
+            const altSection = document.querySelector(altSel);
+            if (altSection) {
+              console.log(`Sección alternativa encontrada: ${altSel}`);
+              const items = altSection.querySelectorAll('li, div[class*="entity"], div[class*="item"]');
+              if (items.length > 0) {
+                console.log(`Procesando ${items.length} items de sección alternativa...`);
+                items.forEach((item, idx) => {
+                  const itemText = item.innerText || '';
+                  // Solo procesar si el item tiene suficiente contenido
+                  if (itemText.length > 20) {
+                    const exp = {};
+                    const lines = itemText.split('\n').filter(l => l.trim() && l.trim().length > 0);
+                    
+                    if (lines.length > 0) {
+                      exp.puesto = lines[0].trim();
+                      if (lines.length > 1) {
+                        exp.empresa = lines[1].trim();
+                      } else {
+                        exp.empresa = 'N/A';
+                      }
+                      
+                      // Buscar período en el texto
+                      const dateMatch = itemText.match(/(\d{4}|\w{3}\s+\d{4})\s*[-–—]\s*(\d{4}|\w{3}\s+\d{4}|actual|present)/i);
+                      exp.periodo = dateMatch ? dateMatch[0].trim() : 'N/A';
+                      
+                      // Buscar ubicación
+                      const locationMatch = itemText.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,?\s+[A-Z][a-z]+)/);
+                      exp.ubicacion = locationMatch ? locationMatch[1] : 'N/A';
+                      
+                      // Descripción (todo el texto después de las primeras líneas)
+                      if (lines.length > 2) {
+                        exp.descripcion = lines.slice(2).join(' ').trim();
+                      } else {
+                        exp.descripcion = 'N/A';
+                      }
+                      
+                      exp.duracion = 'N/A';
+                      exp.tipoEmpleo = 'N/A';
+                      
+                      if (exp.puesto && exp.puesto.length > 0) {
+                        data.experiencia.push(exp);
+                      }
+                    }
+                  }
+                });
+                
+                if (data.experiencia.length > 0) {
+                  console.log(`Extraídas ${data.experiencia.length} experiencias con método alternativo`);
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        // Último intento: buscar cualquier lista que contenga información de trabajo
+        if (data.experiencia.length === 0) {
+          console.log('Último intento: buscando listas con información de trabajo...');
+          const allLists = document.querySelectorAll('ul, ol');
+          for (const list of allLists) {
+            const listText = list.innerText.toLowerCase();
+            if ((listText.includes('experience') || listText.includes('experiencia') || listText.includes('work')) && 
+                list.querySelectorAll('li').length > 0) {
+              const listItems = list.querySelectorAll('li');
+              console.log(`Lista alternativa encontrada con ${listItems.length} items`);
+              
+              listItems.forEach((item) => {
+                const itemText = item.innerText || '';
+                if (itemText.length > 30) { // Solo items con suficiente contenido
+                  const lines = itemText.split('\n').filter(l => l.trim());
+                  if (lines.length >= 2) {
+                    const exp = {
+                      puesto: lines[0].trim(),
+                      empresa: lines[1].trim() || 'N/A',
+                      periodo: 'N/A',
+                      ubicacion: 'N/A',
+                      descripcion: lines.slice(2).join(' ').trim() || 'N/A',
+                      duracion: 'N/A',
+                      tipoEmpleo: 'N/A'
+                    };
+                    
+                    // Buscar período
+                    const dateMatch = itemText.match(/(\d{4}|\w{3}\s+\d{4})\s*[-–—]\s*(\d{4}|\w{3}\s+\d{4}|actual|present)/i);
+                    if (dateMatch) {
+                      exp.periodo = dateMatch[0].trim();
+                    }
+                    
+                    if (exp.puesto && exp.puesto.length > 0 && exp.puesto !== 'N/A') {
+                      data.experiencia.push(exp);
+                    }
+                  }
+                }
+              });
+              
+              if (data.experiencia.length > 0) break;
+            }
+          }
+        }
+        
+        console.log(`Total de experiencias extraídas: ${data.experiencia.length}`);
+        
+        // Educación detallada - múltiples selectores
+        const educationSelectors = [
+          '#education ~ .pvs-list',
+          '[id*="education"] ~ .pvs-list',
+          'section[data-section="education"] .pvs-list',
+          '#education-section .pvs-list'
+        ];
+        
+        let educationSection = null;
+        for (const selector of educationSelectors) {
+          educationSection = document.querySelector(selector);
+          if (educationSection) break;
+        }
+        
+        data.educacion = [];
+        if (educationSection) {
+          const educationItems = educationSection.querySelectorAll('.pvs-list__paged-list-item, li[class*="education"], .pvs-entity');
+          educationItems.forEach((item) => {
+            const edu = {};
+            edu.institucion = getText([
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]',
+              '.pvs-entity__summary-info h3'
+            ]);
+            edu.titulo = getText([
+              '.t-14.t-normal span[aria-hidden="true"]',
+              '.t-normal span[aria-hidden="true"]',
+              '.pvs-entity__summary-info .t-14'
+            ]);
+            
+            // Años de estudio
+            const periodElement = item.querySelector('.t-14.t-normal.t-black--light, .t-black--light');
+            edu.periodo = periodElement ? periodElement.innerText.trim() : 'N/A';
+            
+            // Descripción adicional
+            const descElement = item.querySelector('.inline-show-more-text, .pv-shared-text-with-see-more');
+            edu.descripcion = descElement ? descElement.innerText.trim() : 'N/A';
+            
+            // Calificaciones/Logros
+            const achievements = item.querySelectorAll('[class*="achievement"], [class*="grade"]');
+            edu.logros = Array.from(achievements).map(a => a.innerText.trim()).filter(t => t);
+            
+            // Solo agregar si tiene institución
+            if (edu.institucion !== 'N/A') {
+              data.educacion.push(edu);
+            }
+          });
+        }
+        
+        // Habilidades con endorsements - múltiples selectores
+        const skillsSelectors = [
+          '#skills ~ .pvs-list',
+          '[id*="skills"] ~ .pvs-list',
+          'section[data-section="skills"] .pvs-list',
+          '#skills-section .pvs-list',
+          '.pvs-list[data-section="skills"]'
+        ];
+        
+        let skillsSection = null;
+        for (const selector of skillsSelectors) {
+          skillsSection = document.querySelector(selector);
+          if (skillsSection) break;
+        }
+        
+        data.habilidades = [];
+        if (skillsSection) {
+          const skillItems = skillsSection.querySelectorAll('.pvs-list__paged-list-item, li[class*="skill"], .pvs-entity, .pills');
+          skillItems.forEach((item) => {
+            const skillElement = item.querySelector('.mr1.t-bold span[aria-hidden="true"], [class*="skill-name"], span[class*="skill"], .pvs-entity__summary-info h3');
+            if (skillElement && skillElement.innerText && skillElement.innerText.trim()) {
+              const skillName = skillElement.innerText.trim();
+              const endorsementElement = item.querySelector('[class*="endorsement"], [aria-label*="endorsement"], .pvs-entity__summary-info-v2');
+              let endorsements = 0;
+              if (endorsementElement) {
+                const endorsementText = endorsementElement.innerText || '';
+                const match = endorsementText.match(/(\d+)/);
+                if (match) {
+                  endorsements = parseInt(match[1]);
+                }
+              }
+              
+              data.habilidades.push({
+                nombre: skillName,
+                endorsements: endorsements
+              });
+            }
+          });
+        }
+        
+        // Certificaciones - múltiples selectores
+        const certSelectors = [
+          '#licenses_and_certifications ~ .pvs-list',
+          '[id*="certification"] ~ .pvs-list',
+          'section[data-section="licenses_and_certifications"] .pvs-list',
+          '[id*="licenses"] ~ .pvs-list'
+        ];
+        
+        let certificationsSection = null;
+        for (const selector of certSelectors) {
+          certificationsSection = document.querySelector(selector);
+          if (certificationsSection) break;
+        }
+        
+        data.certificaciones = [];
+        if (certificationsSection) {
+          const certItems = certificationsSection.querySelectorAll('.pvs-list__paged-list-item, .pvs-entity');
+          certItems.forEach((item) => {
+            const cert = {};
+            cert.nombre = getText([
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]'
+            ]);
+            cert.organizacion = getText([
+              '.t-14.t-normal span[aria-hidden="true"]',
+              '.t-normal span[aria-hidden="true"]'
+            ]);
+            cert.fecha = getText([
+              '.t-14.t-normal.t-black--light',
+              '.t-black--light'
+            ]);
+            cert.credentialId = getText([
+              '[class*="credential"]',
+              '.pvs-entity__summary-info-v2'
+            ]);
+            if (cert.nombre !== 'N/A') {
+              data.certificaciones.push(cert);
+            }
+          });
+        }
+        
+        // Proyectos - múltiples selectores
+        const projectSelectors = [
+          '#projects ~ .pvs-list',
+          '[id*="project"] ~ .pvs-list',
+          'section[data-section="projects"] .pvs-list'
+        ];
+        
+        let projectsSection = null;
+        for (const selector of projectSelectors) {
+          projectsSection = document.querySelector(selector);
+          if (projectsSection) break;
+        }
+        
+        data.proyectos = [];
+        if (projectsSection) {
+          const projectItems = projectsSection.querySelectorAll('.pvs-list__paged-list-item, .pvs-entity');
+          projectItems.forEach((item) => {
+            const project = {};
+            project.nombre = getText([
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]'
+            ]);
+            project.descripcion = getText([
+              '.inline-show-more-text',
+              '.pv-shared-text-with-see-more',
+              '[class*="description"]'
+            ]);
+            project.fecha = getText([
+              '.t-14.t-normal.t-black--light',
+              '.t-black--light'
+            ]);
+            const projectLink = item.querySelector('a[href]');
+            project.url = projectLink ? projectLink.href : 'N/A';
+            if (project.nombre !== 'N/A') {
+              data.proyectos.push(project);
+            }
+          });
+        }
+        
+        // Idiomas - múltiples selectores
+        const languageSelectors = [
+          '#languages ~ .pvs-list',
+          '[id*="language"] ~ .pvs-list',
+          'section[data-section="languages"] .pvs-list'
+        ];
+        
+        let languagesSection = null;
+        for (const selector of languageSelectors) {
+          languagesSection = document.querySelector(selector);
+          if (languagesSection) break;
+        }
+        
+        data.idiomas = [];
+        if (languagesSection) {
+          const languageItems = languagesSection.querySelectorAll('.pvs-list__paged-list-item, .pvs-entity');
+          languageItems.forEach((item) => {
+            const lang = {};
+            lang.idioma = getText([
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]'
+            ]);
+            lang.nivel = getText([
+              '.t-14.t-normal',
+              '.t-normal',
+              '.pvs-entity__summary-info-v2'
+            ]);
+            if (lang.idioma !== 'N/A') {
+              data.idiomas.push(lang);
+            }
+          });
+        }
+        
+        // Voluntariado - múltiples selectores
+        const volunteerSelectors = [
+          '#volunteer_experiences ~ .pvs-list',
+          '[id*="volunteer"] ~ .pvs-list',
+          'section[data-section="volunteer"] .pvs-list'
+        ];
+        
+        let volunteerSection = null;
+        for (const selector of volunteerSelectors) {
+          volunteerSection = document.querySelector(selector);
+          if (volunteerSection) break;
+        }
+        
+        data.voluntariado = [];
+        if (volunteerSection) {
+          const volunteerItems = volunteerSection.querySelectorAll('.pvs-list__paged-list-item, .pvs-entity');
+          volunteerItems.forEach((item) => {
+            const vol = {};
+            vol.organizacion = getText([
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]'
+            ]);
+            vol.rol = getText([
+              '.t-14.t-normal span[aria-hidden="true"]',
+              '.t-normal span[aria-hidden="true"]'
+            ]);
+            vol.periodo = getText([
+              '.t-14.t-normal.t-black--light',
+              '.t-black--light'
+            ]);
+            vol.descripcion = getText([
+              '.inline-show-more-text',
+              '.pv-shared-text-with-see-more'
+            ]);
+            if (vol.organizacion !== 'N/A') {
+              data.voluntariado.push(vol);
+            }
+          });
+        }
+        
+        // Cursos - múltiples selectores
+        const courseSelectors = [
+          '#courses ~ .pvs-list',
+          '[id*="course"] ~ .pvs-list',
+          'section[data-section="courses"] .pvs-list'
+        ];
+        
+        let coursesSection = null;
+        for (const selector of courseSelectors) {
+          coursesSection = document.querySelector(selector);
+          if (coursesSection) break;
+        }
+        
+        data.cursos = [];
+        if (coursesSection) {
+          const courseItems = coursesSection.querySelectorAll('.pvs-list__paged-list-item, .pvs-entity');
+          courseItems.forEach((item) => {
+            const course = getText([
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]'
+            ]);
+            if (course !== 'N/A') {
+              data.cursos.push(course);
+            }
+          });
+        }
+        
+        // Publicaciones - múltiples selectores
+        const publicationSelectors = [
+          '#publications ~ .pvs-list',
+          '[id*="publication"] ~ .pvs-list',
+          'section[data-section="publications"] .pvs-list'
+        ];
+        
+        let publicationsSection = null;
+        for (const selector of publicationSelectors) {
+          publicationsSection = document.querySelector(selector);
+          if (publicationsSection) break;
+        }
+        
+        data.publicaciones = [];
+        if (publicationsSection) {
+          const pubItems = publicationsSection.querySelectorAll('.pvs-list__paged-list-item, .pvs-entity');
+          pubItems.forEach((item) => {
+            const pub = {};
+            pub.titulo = getText([
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]'
+            ]);
+            pub.autores = getText([
+              '.t-14.t-normal span[aria-hidden="true"]',
+              '.t-normal span[aria-hidden="true"]'
+            ]);
+            pub.fecha = getText([
+              '.t-14.t-normal.t-black--light',
+              '.t-black--light'
+            ]);
+            pub.descripcion = getText([
+              '.inline-show-more-text',
+              '.pv-shared-text-with-see-more'
+            ]);
+            const pubLink = item.querySelector('a[href]');
+            pub.url = pubLink ? pubLink.href : 'N/A';
+            if (pub.titulo !== 'N/A') {
+              data.publicaciones.push(pub);
+            }
+          });
+        }
+        
+        // Premios y reconocimientos - múltiples selectores
+        const honorSelectors = [
+          '#honors_and_awards ~ .pvs-list',
+          '[id*="honor"] ~ .pvs-list',
+          'section[data-section="honors"] .pvs-list'
+        ];
+        
+        let honorsSection = null;
+        for (const selector of honorSelectors) {
+          honorsSection = document.querySelector(selector);
+          if (honorsSection) break;
+        }
+        
+        data.premios = [];
+        if (honorsSection) {
+          const honorItems = honorsSection.querySelectorAll('.pvs-list__paged-list-item, .pvs-entity');
+          honorItems.forEach((item) => {
+            const honor = {};
+            honor.titulo = getText([
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]'
+            ]);
+            honor.organizacion = getText([
+              '.t-14.t-normal span[aria-hidden="true"]',
+              '.t-normal span[aria-hidden="true"]'
+            ]);
+            honor.fecha = getText([
+              '.t-14.t-normal.t-black--light',
+              '.t-black--light'
+            ]);
+            honor.descripcion = getText([
+              '.inline-show-more-text',
+              '.pv-shared-text-with-see-more'
+            ]);
+            if (honor.titulo !== 'N/A') {
+              data.premios.push(honor);
+            }
+          });
+        }
+        
+        // Organizaciones - múltiples selectores
+        const organizationSelectors = [
+          '#organizations ~ .pvs-list',
+          '[id*="organization"] ~ .pvs-list',
+          'section[data-section="organizations"] .pvs-list'
+        ];
+        
+        let organizationsSection = null;
+        for (const selector of organizationSelectors) {
+          organizationsSection = document.querySelector(selector);
+          if (organizationsSection) break;
+        }
+        
+        data.organizaciones = [];
+        if (organizationsSection) {
+          const orgItems = organizationsSection.querySelectorAll('.pvs-list__paged-list-item, .pvs-entity');
+          orgItems.forEach((item) => {
+            const org = {};
+            org.nombre = getText([
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]'
+            ]);
+            org.rol = getText([
+              '.t-14.t-normal span[aria-hidden="true"]',
+              '.t-normal span[aria-hidden="true"]'
+            ]);
+            org.periodo = getText([
+              '.t-14.t-normal.t-black--light',
+              '.t-black--light'
+            ]);
+            if (org.nombre !== 'N/A') {
+              data.organizaciones.push(org);
+            }
+          });
+        }
+        
+        // Patentes - múltiples selectores
+        const patentSelectors = [
+          '#patents ~ .pvs-list',
+          '[id*="patent"] ~ .pvs-list',
+          'section[data-section="patents"] .pvs-list'
+        ];
+        
+        let patentsSection = null;
+        for (const selector of patentSelectors) {
+          patentsSection = document.querySelector(selector);
+          if (patentsSection) break;
+        }
+        
+        data.patentes = [];
+        if (patentsSection) {
+          const patentItems = patentsSection.querySelectorAll('.pvs-list__paged-list-item, .pvs-entity');
+          patentItems.forEach((item) => {
+            const patent = {};
+            patent.titulo = getText([
+              '.mr1.t-bold span[aria-hidden="true"]',
+              '.t-bold span[aria-hidden="true"]',
+              'h3 span[aria-hidden="true"]'
+            ]);
+            patent.numero = getText([
+              '.t-14.t-normal span[aria-hidden="true"]',
+              '.t-normal span[aria-hidden="true"]'
+            ]);
+            patent.fecha = getText([
+              '.t-14.t-normal.t-black--light',
+              '.t-black--light'
+            ]);
+            patent.descripcion = getText([
+              '.inline-show-more-text',
+              '.pv-shared-text-with-see-more'
+            ]);
+            if (patent.titulo !== 'N/A') {
+              data.patentes.push(patent);
+            }
+          });
+        }
+        
+        // Testimonios/Recomendaciones (número)
+        const recommendationsSection = document.querySelector('[class*="recommendation"], [id*="recommendation"]');
+        data.recomendaciones = {
+          recibidas: 0,
+          dadas: 0
+        };
+        if (recommendationsSection) {
+          const recText = recommendationsSection.innerText;
+          const receivedMatch = recText.match(/(\d+)\s*(recomendaciones?\s*recibidas?|received)/i);
+          const givenMatch = recText.match(/(\d+)\s*(recomendaciones?\s*dadas?|given)/i);
+          data.recomendaciones.recibidas = receivedMatch ? parseInt(receivedMatch[1]) : 0;
+          data.recomendaciones.dadas = givenMatch ? parseInt(givenMatch[1]) : 0;
+        }
+        
+        // URL de imagen de perfil
+        const imageElement = document.querySelector('.pv-top-card-profile-picture__image, img[alt*="profile"], [class*="profile-picture"] img');
+        data.imagenPerfil = imageElement ? imageElement.src : 'N/A';
+        
+        // URL del perfil
+        data.urlPerfil = window.location.href.split('?')[0];
+        
+        // Fecha de extracción
+        data.fechaExtraccion = new Date().toISOString();
+        
+        return data;
+      }, profileName, contactInfo);
+
+      if (experienceFromDetailsPage.length > 0) {
+        profileData.experiencia = experienceFromDetailsPage;
+        console.log(`  Experiencia laboral tomada de /details/experience/: ${profileData.experiencia.length} entradas`);
+      }
+
+      return profileData;
+    } catch (error) {
+      console.error('Error obteniendo detalles del perfil:', error.message);
+      return null;
+    }
+  }
+
+  // Limpiar cookies guardadas (forzar nuevo login)
+  clearCookies() {
+    try {
+      if (existsSync(this.cookiesFile)) {
+        fs.unlinkSync(this.cookiesFile);
+        console.log('✓ Cookies eliminadas. Se requerirá login en la próxima ejecución.');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error eliminando cookies:', error.message);
+      return false;
+    }
+  }
+
+  async close() {
+    if (this.browser) {
+      // Intentar guardar cookies antes de cerrar, pero con manejo de errores
+      try {
+        // Verificar que la página esté disponible antes de intentar guardar
+        if (this.page && !this.page.isClosed()) {
+          // Usar un timeout corto para no bloquear el cierre
+          await Promise.race([
+            this.saveCookies(),
+            new Promise(resolve => setTimeout(resolve, 1000))
+          ]);
+        }
+      } catch (error) {
+        // Ignorar todos los errores al cerrar
+      }
+      
+      try {
+        await this.browser.close();
+        console.log('Navegador cerrado');
+      } catch (error) {
+        // Ignorar errores si el navegador ya está cerrado
+      }
+    }
+  }
+}
+
+// Función para leer nombres desde un archivo
+function readNamesFromFile(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const extension = filePath.split('.').pop().toLowerCase();
+    
+    if (extension === 'json') {
+      const data = JSON.parse(content);
+      // Si es un array de strings
+      if (Array.isArray(data)) {
+        return data;
+      }
+      // Si es un objeto con una propiedad 'nombres'
+      if (data.nombres && Array.isArray(data.nombres)) {
+        return data.nombres;
+      }
+      // Si es un array de objetos con propiedad 'nombre'
+      if (Array.isArray(data) && data[0] && typeof data[0] === 'object' && data[0].nombre) {
+        return data.map(item => item.nombre);
+      }
+    } else if (extension === 'csv' || extension === 'txt') {
+      // Leer CSV o TXT (una línea por nombre)
+      return content
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && !line.startsWith('#'));
+    }
+    
+    return [];
+  } catch (error) {
+    console.error(`Error leyendo archivo ${filePath}:`, error.message);
+    return [];
+  }
+}
+
+// Función para búsqueda masiva
+async function massiveSearch(scraper, names, options = {}) {
+  const {
+    getFullDetails = true, // Por defecto obtener detalles completos
+    delayBetweenSearches = 5000, // 5 segundos por defecto
+    maxProfilesPerSearch = 25, // Límite de perfiles por búsqueda
+    filterKeywords = null // Palabras clave para filtrar
+  } = options;
+  
+  const allResults = [];
+  const stats = {
+    total: names.length,
+    completed: 0,
+    failed: 0,
+    profilesFound: 0,
+    profilesFiltered: 0
+  };
+  
+  console.log(`\n=== Iniciando búsqueda masiva ===`);
+  console.log(`Total de búsquedas: ${stats.total}`);
+  console.log(`Delay entre búsquedas: ${delayBetweenSearches / 1000}s`);
+  console.log(`Obtener detalles completos: ${getFullDetails ? 'Sí' : 'No'}`);
+  if (filterKeywords && filterKeywords.length > 0) {
+    console.log(`Filtros de palabras clave: ${filterKeywords.join(', ')}`);
+  }
+  console.log(`Máximo de perfiles por búsqueda: ${maxProfilesPerSearch}\n`);
+  
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    console.log(`\n[${i + 1}/${stats.total}] Buscando: ${name}`);
+    
+    try {
+      // Buscar personas con opciones
+      const profiles = await scraper.searchPerson(name, {
+        getFullDetails: getFullDetails,
+        filterKeywords: filterKeywords,
+        maxResults: maxProfilesPerSearch
+      });
+      
+      if (profiles.length === 0) {
+        console.log(`  ⚠ No se encontraron perfiles para "${name}"${filterKeywords ? ' que coincidan con los filtros' : ''}`);
+        stats.failed++;
+      } else {
+        console.log(`  ✓ Encontrados ${profiles.length} perfiles`);
+        stats.profilesFound += profiles.length;
+        if (filterKeywords) {
+          stats.profilesFiltered += profiles.length;
+        }
+        
+        // Agregar resultados con metadata
+        allResults.push({
+          busqueda: name,
+          fecha: new Date().toISOString(),
+          cantidadPerfiles: profiles.length,
+          perfiles: profiles
+        });
+      }
+      
+      stats.completed++;
+      
+      // Delay entre búsquedas (excepto en la última)
+      if (i < names.length - 1) {
+        console.log(`  Esperando ${delayBetweenSearches / 1000}s antes de la siguiente búsqueda...`);
+        await new Promise(resolve => setTimeout(resolve, delayBetweenSearches));
+      }
+      
+    } catch (error) {
+      console.error(`  ✗ Error buscando "${name}":`, error.message);
+      stats.failed++;
+      allResults.push({
+        busqueda: name,
+        fecha: new Date().toISOString(),
+        error: error.message,
+        perfiles: []
+      });
+    }
+  }
+  
+  return { results: allResults, stats };
+}
+
+// Función principal
+async function main() {
+  const scraper = new LinkedInScraper();
+  
+  try {
+    // Inicializar el scraper
+    await scraper.init();
+    
+    // Verificar si hay sesión activa
+    console.log('Verificando sesión activa...');
+    const sessionActive = await scraper.isSessionActive();
+    
+    if (!sessionActive) {
+      console.log('No hay sesión activa. Iniciando sesión...');
+      
+      // Obtener credenciales del archivo .env
+      const email = process.env.LINKEDIN_EMAIL;
+      const password = process.env.LINKEDIN_PASSWORD;
+      
+      if (!email || !password) {
+        console.error('Error: Debes configurar LINKEDIN_EMAIL y LINKEDIN_PASSWORD en el archivo .env');
+        await scraper.close();
+        return;
+      }
+      
+      // Iniciar sesión
+      const loginSuccess = await scraper.login(email, password);
+      if (!loginSuccess) {
+        await scraper.close();
+        return;
+      }
+    } else {
+      console.log('✓ Sesión activa encontrada. Continuando sin login...');
+    }
+    
+    // Verificar si se quiere limpiar la sesión
+    if (process.argv.includes('--clear-session') || process.argv.includes('--clear')) {
+      scraper.clearCookies();
+      console.log('Sesión limpiada. Ejecuta nuevamente para hacer login.');
+      await scraper.close();
+      return;
+    }
+    
+    // Obtener argumentos de línea de comandos
+    // Por defecto obtener detalles completos (a menos que se especifique --no-details)
+    const getDetails = !process.argv.includes('--no-details') && (process.argv.includes('--details') || process.argv.includes('-d') || true);
+    const delayArg = process.argv.find(arg => arg.startsWith('--delay='));
+    const delay = delayArg ? parseInt(delayArg.split('=')[1]) * 1000 : 5000;
+    
+    // Obtener palabras clave para filtrar
+    const keywordsArg = process.argv.find(arg => arg.startsWith('--keywords=') || arg.startsWith('--filter='));
+    let filterKeywords = null;
+    if (keywordsArg) {
+      const keywordsValue = keywordsArg.split('=')[1];
+      filterKeywords = keywordsValue.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    }
+    
+    // Obtener máximo de resultados por búsqueda (--max=N o --max N)
+    let maxResults = 25;
+    const maxIdx = process.argv.findIndex(arg => arg === '--max' || arg.startsWith('--max='));
+    if (maxIdx !== -1) {
+      const arg = process.argv[maxIdx];
+      const value = arg.startsWith('--max=') ? arg.split('=')[1] : process.argv[maxIdx + 1];
+      const parsed = parseInt(value, 10);
+      if (!isNaN(parsed) && parsed >= 1) {
+        maxResults = parsed;
+        console.log(`[DEBUG] --max detectado: ${maxResults} perfiles máximo`);
+      }
+    }
+    console.log(`[DEBUG] process.argv: ${JSON.stringify(process.argv)}`);
+    
+    // Verificar si se usa --url (buscar en todos los argumentos)
+    const urlArg = process.argv.find(arg => arg.startsWith('--url=') || arg === '--url');
+    let urlValue = null;
+    
+    if (urlArg) {
+      if (urlArg.includes('=')) {
+        // Extraer el valor después del =
+        urlValue = urlArg.split('=').slice(1).join('='); // Usar slice y join por si hay = en la URL
+        // Remover comillas si las tiene
+        urlValue = urlValue.replace(/^["']|["']$/g, '');
+      } else {
+        // Si --url está sin =, buscar el siguiente argumento
+        const urlIndex = process.argv.indexOf('--url');
+        if (urlIndex !== -1 && process.argv[urlIndex + 1]) {
+          urlValue = process.argv[urlIndex + 1].replace(/^["']|["']$/g, '');
+        }
+      }
+    }
+    
+    // Obtener el input (primer argumento que no sea un flag)
+    const input = process.argv.find((arg, index) => {
+      // Saltar node y index.js
+      if (index < 2) return false;
+      // Si ya encontramos --url, no usar este como input
+      if (urlValue) return false;
+      // No usar flags como input
+      if (arg.startsWith('--')) return false;
+      return true;
+    }) || process.argv[2];
+    
+    // Verificar si el input es una URL de LinkedIn
+    const isLinkedInUrl = input && (
+      input.startsWith('https://www.linkedin.com/in/') ||
+      input.startsWith('http://www.linkedin.com/in/') ||
+      input.startsWith('https://linkedin.com/in/') ||
+      input.startsWith('http://linkedin.com/in/') ||
+      input.includes('linkedin.com/in/')
+    );
+    
+    const useUrlMode = urlValue || isLinkedInUrl;
+    
+    if (!input) {
+      console.log('Uso:');
+      console.log('  Búsqueda individual:');
+      console.log('    node index.js "Nombre a buscar"');
+      console.log('    node index.js "Juan" --keywords="desarrollador,javascript"');
+      console.log('    node index.js "María" --filter="marketing,digital" --max=10');
+      console.log('');
+      console.log('  Obtener detalles desde URL:');
+      console.log('    npm start "https://www.linkedin.com/in/usuario/"');
+      console.log('    npm start -- --url="https://www.linkedin.com/in/usuario/"');
+      console.log('    node index.js "https://www.linkedin.com/in/usuario/"');
+      console.log('    node index.js --url="https://www.linkedin.com/in/usuario/"');
+      console.log('');
+      console.log('  Búsqueda masiva desde archivo:');
+      console.log('    node index.js nombres.json');
+      console.log('    node index.js nombres.csv --keywords="ingeniero,software"');
+      console.log('    node index.js nombres.txt --delay=10 --max=15');
+      console.log('');
+      console.log('Opciones:');
+      console.log('  --details, -d           Obtener detalles completos (por defecto: activado)');
+      console.log('  --keywords=palabras     Filtrar por palabras clave (separadas por coma)');
+      console.log('  --filter=palabras       Alias de --keywords');
+      console.log('  --max=N                 Máximo de perfiles por búsqueda (default: 25)');
+      console.log('  --delay=N               Delay en segundos entre búsquedas (default: 5)');
+      console.log('  --url=URL               Obtener detalles directamente desde URL de perfil');
+      console.log('  --clear-session         Limpiar sesión guardada (forzar nuevo login)');
+      console.log('');
+      console.log('Ejemplos:');
+      console.log('  # Buscar "Juan" y filtrar por "desarrollador" o "programador"');
+      console.log('  node index.js "Juan" --keywords="desarrollador,programador"');
+      console.log('');
+      console.log('  # Obtener detalles de un perfil específico por URL');
+      console.log('  npm start "https://www.linkedin.com/in/juan-perez/"');
+      console.log('  npm start -- --url="https://www.linkedin.com/in/juan-perez/"');
+      console.log('  node index.js "https://www.linkedin.com/in/juan-perez/"');
+      console.log('  node index.js --url="https://www.linkedin.com/in/juan-perez/"');
+      console.log('');
+      console.log('  # Búsqueda masiva filtrando por palabras clave');
+      console.log('  node index.js nombres.json --keywords="marketing,digital" --max=20');
+      await scraper.close();
+      return;
+    }
+    
+    // Si es una URL de LinkedIn, obtener detalles directamente
+    if (useUrlMode) {
+      let profileUrl = urlValue || input;
+      
+      // Normalizar la URL
+      if (!profileUrl.startsWith('http')) {
+        profileUrl = 'https://' + profileUrl;
+      }
+      
+      // Asegurar que sea una URL de perfil válida
+      if (!profileUrl.includes('linkedin.com/in/')) {
+        console.error('Error: La URL debe ser un perfil de LinkedIn (debe contener linkedin.com/in/)');
+        await scraper.close();
+        return;
+      }
+      
+      console.log(`\n=== Obteniendo detalles del perfil ===`);
+      console.log(`URL: ${profileUrl}\n`);
+      
+      try {
+        const profileData = await scraper.getProfileDetails(profileUrl);
+        
+        if (!profileData) {
+          console.log('⚠ No se pudieron obtener los detalles del perfil.');
+        } else {
+          // Crear estructura similar a la búsqueda para consistencia
+          const result = {
+            nombre: profileData.nombreCompleto !== 'N/A' ? profileData.nombreCompleto : 'N/A',
+            titulo: profileData.headline !== 'N/A' ? profileData.headline : 'N/A',
+            ubicacion: profileData.ubicacion !== 'N/A' ? profileData.ubicacion : 'N/A',
+            descripcion: profileData.acercaDe !== 'N/A' ? profileData.acercaDe.substring(0, 200) : 'N/A',
+            urlPerfil: profileUrl,
+            imagenPerfil: profileData.imagenPerfil !== 'N/A' ? profileData.imagenPerfil : 'N/A',
+            detallesCompletos: profileData
+          };
+          
+          // Mostrar información básica
+          console.log('\n=== Información del Perfil ===\n');
+          console.log(`Nombre: ${result.nombre}`);
+          console.log(`Título: ${result.titulo}`);
+          console.log(`Ubicación: ${result.ubicacion}`);
+          if (result.descripcion !== 'N/A' && result.descripcion.length > 0) {
+            console.log(`Descripción: ${result.descripcion}...`);
+          }
+          console.log(`\nExperiencia laboral: ${profileData.experiencia ? profileData.experiencia.length : 0} trabajos encontrados`);
+          if (profileData.experiencia && profileData.experiencia.length > 0) {
+            console.log('\n--- Experiencia Laboral ---');
+            profileData.experiencia.forEach((exp, index) => {
+              console.log(`\n${index + 1}. ${exp.puesto !== 'N/A' ? exp.puesto : 'Sin título'}`);
+              if (exp.empresa !== 'N/A') {
+                console.log(`   Empresa: ${exp.empresa}`);
+              }
+              if (exp.periodo !== 'N/A') {
+                console.log(`   Período: ${exp.periodo}`);
+              }
+              if (exp.ubicacion !== 'N/A') {
+                console.log(`   Ubicación: ${exp.ubicacion}`);
+              }
+              if (exp.descripcion !== 'N/A' && exp.descripcion.length > 0) {
+                console.log(`   Descripción: ${exp.descripcion.substring(0, 150)}...`);
+              }
+            });
+          }
+          
+          console.log(`\nEducación: ${profileData.educacion ? profileData.educacion.length : 0} registros encontrados`);
+          console.log(`Habilidades: ${profileData.habilidades ? profileData.habilidades.length : 0} habilidades encontradas`);
+          
+          // Guardar resultados en JSON
+          const timestamp = Date.now();
+          const urlName = profileUrl.split('/in/')[1].replace(/[^a-zA-Z0-9]/g, '_').split('?')[0];
+          const outputFile = `perfil_${urlName}_${timestamp}.json`;
+          fs.writeFileSync(outputFile, JSON.stringify(result, null, 2), 'utf-8');
+          console.log(`\n✓ Resultados guardados en: ${outputFile}`);
+        }
+      } catch (error) {
+        console.error('Error obteniendo detalles del perfil:', error.message);
+      } finally {
+        await scraper.close();
+      }
+      return;
+    }
+    
+    let names = [];
+    let isMassiveSearch = false;
+    
+    // Verificar si es un archivo
+    if (existsSync(input)) {
+      console.log(`Leyendo nombres desde archivo: ${input}`);
+      names = readNamesFromFile(input);
+      isMassiveSearch = true;
+      
+      if (names.length === 0) {
+        console.error('No se encontraron nombres en el archivo o el archivo está vacío.');
+        await scraper.close();
+        return;
+      }
+      
+      console.log(`Se encontraron ${names.length} nombres para buscar.\n`);
+    } else {
+      // Es una búsqueda individual
+      names = [input];
+    }
+    
+    if (isMassiveSearch) {
+      // Búsqueda masiva
+      const { results, stats } = await massiveSearch(scraper, names, {
+        getFullDetails: getDetails,
+        delayBetweenSearches: delay,
+        maxProfilesPerSearch: maxResults,
+        filterKeywords: filterKeywords
+      });
+      
+      // Guardar resultados
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const outputFile = `resultados_masivos_${timestamp}.json`;
+      
+      const output = {
+        fecha: new Date().toISOString(),
+        estadisticas: stats,
+        resultados: results
+      };
+      
+      fs.writeFileSync(outputFile, JSON.stringify(output, null, 2), 'utf-8');
+      
+      console.log(`\n=== Búsqueda masiva completada ===`);
+      console.log(`Total de búsquedas: ${stats.total}`);
+      console.log(`Completadas: ${stats.completed}`);
+      console.log(`Fallidas: ${stats.failed}`);
+      console.log(`Perfiles encontrados: ${stats.profilesFound}`);
+      if (filterKeywords) {
+        console.log(`Perfiles que coinciden con filtros: ${stats.profilesFiltered}`);
+      }
+      console.log(`\n✓ Resultados guardados en: ${outputFile}`);
+      
+    } else {
+      // Búsqueda individual
+      const searchName = names[0];
+      console.log(`\n=== Buscando: ${searchName} ===\n`);
+      if (filterKeywords && filterKeywords.length > 0) {
+        console.log(`Filtros aplicados: ${filterKeywords.join(', ')}\n`);
+      }
+      
+      const profiles = await scraper.searchPerson(searchName, {
+        getFullDetails: getDetails,
+        filterKeywords: filterKeywords,
+        maxResults: maxResults
+      });
+      
+      if (profiles.length === 0) {
+        console.log(`No se encontraron perfiles${filterKeywords ? ' que coincidan con los filtros especificados' : ''}.`);
+      } else {
+        console.log(`\n✓ Se encontraron ${profiles.length} perfiles:\n`);
+        
+        // Mostrar resultados básicos
+        profiles.forEach((profile, index) => {
+          console.log(`\n--- Perfil ${index + 1} ---`);
+          console.log(`Nombre: ${profile.nombre}`);
+          console.log(`Título: ${profile.titulo}`);
+          console.log(`Ubicación: ${profile.ubicacion}`);
+          if (profile.descripcion && profile.descripcion !== 'N/A') {
+            console.log(`Descripción: ${profile.descripcion.substring(0, 100)}...`);
+          }
+          console.log(`URL: ${profile.urlPerfil}`);
+          if (profile.detallesCompletos) {
+            console.log(`✓ Detalles completos obtenidos`);
+          }
+        });
+        
+        // Guardar resultados en JSON
+        const outputFile = `resultados_${searchName.replace(/\s+/g, '_')}_${Date.now()}.json`;
+        fs.writeFileSync(outputFile, JSON.stringify(profiles, null, 2), 'utf-8');
+        console.log(`\n✓ Resultados guardados en: ${outputFile}`);
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error general:', error);
+  } finally {
+    // Cerrar el navegador después de 5 segundos
+    console.log('\nCerrando navegador en 5 segundos...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    await scraper.close();
+  }
+}
+
+// Ejecutar si es el archivo principal
+// Node.js 18.20.5+ soporta mejor import.meta.url
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Verificar si es el módulo principal
+const isMainModule = process.argv[1] && 
+                     (process.argv[1].endsWith('index.js') || 
+                      process.argv[1].replace(/\\/g, '/').endsWith(__filename.replace(/\\/g, '/')));
+
+if (isMainModule) {
+  main().catch(console.error);
+}
+
+export default LinkedInScraper;
+

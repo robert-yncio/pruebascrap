@@ -1,0 +1,25 @@
+{
+  "name": "pruebaSccraping",
+  "version": "1.0.0",
+  "description": "Scraper de LinkedIn para buscar personas y obtener información de perfiles",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "linkedin",
+    "scraping",
+    "puppeteer"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "puppeteer": "^21.11.0"
+  },
+  "engines": {
+    "node": ">=18.20.5"
+  }
+}
