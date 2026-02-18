@@ -1,0 +1,10 @@
+# Lista de perfiles de LinkedIn a excluir
+# Una URL por línea, las líneas que empiecen con # son comentarios
+
+https://www.linkedin.com/in/usuario-a-excluir/
+https://www.linkedin.com/in/perfil-no-deseado/
+linkedin.com/in/ya-contactado/
+www.linkedin.com/in/otro-perfil-excluir/
+
+# También se pueden agregar URLs con parámetros (se normalizarán automáticamente)
+https://www.linkedin.com/in/perfil-con-parametros/?originalSubdomain=es

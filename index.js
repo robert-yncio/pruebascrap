@@ -2,10 +2,55 @@ import puppeteer from 'puppeteer';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
 import { existsSync } from 'fs';
+import { format } from 'util';
 
 dotenv.config();
+
+// Historial de consola en history.log (cada ejecución se añade al archivo)
+let historyLogStream = null;
+
+function setupHistoryLog() {
+  try {
+    const logPath = join(process.cwd(), 'history.log');
+    historyLogStream = fs.createWriteStream(logPath, { flags: 'a' });
+    const runStart = new Date().toISOString();
+    historyLogStream.write(`\n${'='.repeat(60)}\n`);
+    historyLogStream.write(`[${runStart}] EJECUCIÓN INICIADA - process.argv: ${process.argv.slice(1).join(' ')}\n`);
+    historyLogStream.write(`${'='.repeat(60)}\n`);
+
+    const originalLog = console.log;
+    const originalError = console.error;
+    const originalWarn = console.warn;
+
+    function writeToHistory(level, args) {
+      if (!historyLogStream) return;
+      try {
+        const msg = args.length > 0 ? format(...args) : '';
+        const line = `[${new Date().toISOString()}] [${level}] ${msg}\n`;
+        historyLogStream.write(line);
+      } catch (e) {}
+    }
+
+    console.log = function (...args) {
+      writeToHistory('LOG', args);
+      originalLog.apply(console, args);
+    };
+    console.error = function (...args) {
+      writeToHistory('ERROR', args);
+      originalError.apply(console, args);
+    };
+    console.warn = function (...args) {
+      writeToHistory('WARN', args);
+      originalWarn.apply(console, args);
+    };
+
+    originalLog(`Historial de esta ejecución se guarda en: ${logPath}`);
+  } catch (err) {
+    process.stderr.write(`No se pudo crear history.log: ${err.message}\n`);
+  }
+}
 
 class LinkedInScraper {
   constructor() {
@@ -245,17 +290,34 @@ class LinkedInScraper {
       const { 
         filterKeywords = null, // Array de palabras clave para filtrar
         getFullDetails = false, // Obtener detalles completos automáticamente
-        maxResults = 25 // Máximo de resultados a obtener
+        maxResults = 25, // Máximo de resultados a obtener
+        exclusionUrls = [] // Array de URLs de LinkedIn para excluir
       } = options;
       
       console.log(`Buscando: ${name}...`);
       if (filterKeywords && filterKeywords.length > 0) {
-        console.log(`Filtros aplicados: ${filterKeywords.join(', ')}`);
+        console.log(`Palabras clave para priorizar barrido: ${filterKeywords.join(', ')}`);
       }
       
-      // Ir a la página de búsqueda con parámetros de navegación normal
-      // La búsqueda es flexible: puede ser solo nombre, nombre completo, etc.
-      const searchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(name)}&origin=SWITCH_SEARCH_VERTICAL`;
+      // Construir query inicial: título + pocas palabras clave (LinkedIn suele devolver 0 si la query es muy larga)
+      const titleOnly = (name || '').trim();
+      let searchQuery = titleOnly;
+      if (filterKeywords && filterKeywords.length > 0) {
+        const kw = filterKeywords.map(k => (typeof k === 'string' ? k : '').trim()).filter(k => k.length > 0);
+        // Usar solo las primeras 4–5 palabras clave para la URL (más suele dar 0 resultados en LinkedIn)
+        const keywordsPart = kw.slice(0, 5).join(' ');
+        if (keywordsPart) {
+          searchQuery = searchQuery ? `${searchQuery} ${keywordsPart}` : keywordsPart;
+        }
+      }
+      const maxQueryLength = 180;
+      if (searchQuery.length > maxQueryLength) {
+        searchQuery = searchQuery.substring(0, maxQueryLength).trim();
+      }
+      // geoUrn Perú: 102927786 — restringe búsqueda a Perú
+      const geoPeru = 'geoUrn=%5B%22102927786%22%5D';
+      let searchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(searchQuery)}&origin=SWITCH_SEARCH_VERTICAL&${geoPeru}`;
+      console.log(`Query enviada a LinkedIn: ${searchQuery.substring(0, 80)}${searchQuery.length > 80 ? '...' : ''}`);
       await this.page.goto(searchUrl, {
         waitUntil: 'domcontentloaded',
         timeout: 90000
@@ -332,242 +394,159 @@ class LinkedInScraper {
       });
       await this.page.waitForTimeout(2000);
 
-      // Extraer información de los perfiles con múltiples selectores
-      console.log('Extrayendo información de perfiles...');
-      const profiles = await this.page.evaluate(() => {
-        const results = [];
-        // Intentar múltiples selectores para encontrar las tarjetas de perfil
-        // Usando la estructura real de LinkedIn que me mostró el usuario
-        const selectors = [
-          'div[data-view-name="people-search-result"]',
-          'div.dea36951[data-view-name="people-search-result"]',
-          'li.entity-result__item',
-          '.entity-result__item',
-          'li.reusable-search__result-container',
-          '.reusable-search__result-container',
-          'li[class*="result"]',
-          'div[class*="entity-result"]',
-          '[class*="search-result"]',
-          'li[data-chameleon-result-urn]',
-          'div[data-chameleon-result-urn]'
-        ];
-        
-        let profileCards = [];
-        let usedSelector = '';
-        for (const selector of selectors) {
-          const foundCards = document.querySelectorAll(selector);
-          if (foundCards.length > 0) {
-            // Convertir NodeList a Array
-            profileCards = Array.from(foundCards);
-            usedSelector = selector;
-            console.log(`Encontrados ${profileCards.length} elementos con selector: ${selector}`);
-            break;
-          }
-        }
-        
-        console.log(`Total de tarjetas encontradas: ${profileCards.length}`);
-        
-        // Si no encontramos nada, intentar buscar cualquier enlace a perfil
-        if (profileCards.length === 0) {
-          console.log('No se encontraron tarjetas, buscando enlaces a perfiles...');
-          const allLinks = document.querySelectorAll('a[href*="/in/"]');
-          console.log(`Enlaces a perfiles encontrados: ${allLinks.length}`);
-          
-          // Crear tarjetas virtuales desde los enlaces
-          const cardsFromLinks = [];
-          allLinks.forEach((link, index) => {
-            if (link.href && link.href.includes('/in/') && !link.href.includes('/in/feed') && !link.href.includes('/in/recruiter')) {
-              const card = link.closest('li') || link.closest('div') || link.parentElement;
-              if (card && !cardsFromLinks.includes(card)) {
-                cardsFromLinks.push(card);
-              }
-            }
-          });
-          profileCards = cardsFromLinks;
-          console.log(`Tarjetas creadas desde enlaces: ${profileCards.length}`);
-        }
-        
-        // Asegurarse de que profileCards es un array
-        if (!Array.isArray(profileCards)) {
-          profileCards = Array.from(profileCards);
-        }
-        
-        profileCards.forEach((card, index) => {
-          try {
-            // Nombre - usando la estructura real de LinkedIn
-            const nameSelectors = [
-              'a[data-view-name="search-result-lockup-title"]',
-              'a._2277ad60._043618e5[data-view-name="search-result-lockup-title"]',
-              '.entity-result__title-text a',
-              'span.entity-result__title-text a',
-              'a[href*="/in/"][aria-label]',
-              'a[href*="/in/"]',
-              '.search-result__result-link',
-              'h3 a[href*="/in/"]',
-              'div[class*="title"] a[href*="/in/"]',
-              'span[class*="title"] a[href*="/in/"]',
-              'p a[href*="/in/"]'
-            ];
-            let nameElement = null;
-            for (const sel of nameSelectors) {
-              nameElement = card.querySelector(sel);
-              if (nameElement && nameElement.innerText && nameElement.innerText.trim().length > 0) {
-                break;
-              }
-            }
-            
-            // Si no encontramos nombre, buscar cualquier enlace a perfil en la tarjeta
-            if (!nameElement || !nameElement.innerText || nameElement.innerText.trim().length === 0) {
-              const profileLink = card.querySelector('a[href*="/in/"]:not([href*="/in/feed"])');
-              if (profileLink) {
-                nameElement = profileLink;
-              }
-            }
-            
-            let name = nameElement && nameElement.innerText ? nameElement.innerText.trim() : 'N/A';
-            const profileUrl = nameElement && nameElement.href ? nameElement.href.split('?')[0] : 'N/A';
-            
-            // Si no tenemos nombre pero sí URL, intentar obtener el nombre del aria-label
-            if (name === 'N/A' && profileUrl !== 'N/A' && nameElement) {
-              const ariaLabel = nameElement.getAttribute('aria-label');
-              if (ariaLabel) {
-                const nameFromAria = ariaLabel.replace(/^Ver perfil de\s*/i, '').trim();
-                if (nameFromAria.length > 0) {
-                  name = nameFromAria;
-                }
-              }
-            }
-            
-            // Título/Posición - usando la estructura real de LinkedIn
-            const titleSelectors = [
-              'div._655037c4._185fef28.d065caac.b90d48f3.bc8cf9c8._903d2b03._2ad2a80d p.d6702861._06170c11._73af0c6b._6763f53f._7de9ee24._09f66719.f694e6fa._4972da53',
-              'p.d6702861._06170c11._73af0c6b._6763f53f._7de9ee24._09f66719.f694e6fa._4972da53',
-              'div[class*="_655037c4"] p[class*="d6702861"]',
-              '.entity-result__primary-subtitle',
-              '.search-result__snippets',
-              '[class*="subtitle"]',
-              'p[class*="_73af0c6b"]'
-            ];
-            let titleElement = null;
-            for (const sel of titleSelectors) {
-              titleElement = card.querySelector(sel);
-              // Verificar que no sea la ubicación (la ubicación suele estar en otro div)
-              if (titleElement && titleElement.innerText && titleElement.innerText.trim().length > 0) {
-                // Verificar que no sea ubicación buscando palabras comunes de ubicación
-                const text = titleElement.innerText.trim().toLowerCase();
-                if (!text.match(/^(perú|peru|lima|madrid|españa|spain|área metropolitana|metropolitan area|bacoor|filipinas)/i)) {
-                  break;
-                }
-              }
-            }
-            const title = titleElement ? titleElement.innerText.trim() : 'N/A';
-            
-            // Ubicación - usando la estructura real de LinkedIn
-            const locationSelectors = [
-              'div._655037c4._185fef28.d065caac.b90d48f3.bc8cf9c8._69a4e1af._2ad2a80d p.d6702861._06170c11._73af0c6b._6763f53f._7de9ee24._09f66719.f694e6fa._4972da53',
-              'div[class*="_69a4e1af"] p[class*="d6702861"]',
-              '.entity-result__secondary-subtitle',
-              '[class*="location"]',
-              '[class*="secondary"]'
-            ];
-            let locationElement = null;
-            for (const sel of locationSelectors) {
-              locationElement = card.querySelector(sel);
-              if (locationElement && locationElement.innerText && locationElement.innerText.trim().length > 0) {
-                break;
-              }
-            }
-            const location = locationElement ? locationElement.innerText.trim() : 'N/A';
-            
-            // Descripción - múltiples selectores
-            const descSelectors = [
-              '.entity-result__summary',
-              '.search-result__snippets',
-              '[class*="summary"]'
-            ];
-            let descriptionElement = null;
-            for (const sel of descSelectors) {
-              descriptionElement = card.querySelector(sel);
-              if (descriptionElement) break;
-            }
-            const description = descriptionElement ? descriptionElement.innerText.trim() : 'N/A';
-            
-            // Imagen de perfil - usando la estructura real de LinkedIn
-            const imageSelectors = [
-              'figure.eb03e47a img._4064e63a',
-              'img._4064e63a.dfd733ea._934440b8',
-              'img[class*="_4064e63a"]',
-              '.presence-entity__image img',
-              '.entity-result__universal-image img',
-              'img[alt*="profile"]',
-              '.search-result__image img',
-              'figure img'
-            ];
-            let imageElement = null;
-            for (const sel of imageSelectors) {
-              imageElement = card.querySelector(sel);
-              if (imageElement) break;
-            }
-            const imageUrl = imageElement ? imageElement.src : 'N/A';
-            
-            // Solo agregar si tiene al menos nombre o URL válida
-            if ((name !== 'N/A' && name.length > 0) || (profileUrl !== 'N/A' && profileUrl.includes('/in/'))) {
-              results.push({
-                nombre: name,
-                titulo: title,
-                ubicacion: location,
-                descripcion: description,
-                urlPerfil: profileUrl,
-                imagenPerfil: imageUrl
-              });
-            }
-          } catch (error) {
-            console.error(`Error procesando perfil ${index}:`, error);
-          }
-        });
-        
-        console.log(`Total de perfiles extraídos: ${results.length}`);
-        return results;
-      });
+      // Extraer información de los perfiles (página 1)
+      console.log('Extrayendo información de perfiles (página 1)...');
+      let profiles = await this._extractProfilesFromCurrentPage();
+      console.log(`Perfiles encontrados en página 1: ${profiles.length}`);
 
-      console.log(`Perfiles encontrados después de extracción: ${profiles.length}`);
+      // Detectar paginador y recorrer resto de hojas
+      await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await this.page.waitForTimeout(2000);
+      const paginationInfo = await this.page.evaluate(() => {
+        const pag = document.querySelector('.artdeco-pagination');
+        if (!pag) return { totalPages: 1, pageSize: 10 };
+        const indicators = pag.querySelectorAll('li.artdeco-pagination__indicator');
+        let totalPages = 1;
+        const numbers = [];
+        indicators.forEach(li => {
+          const n = parseInt(li.innerText, 10);
+          if (!isNaN(n)) numbers.push(n);
+        });
+        if (numbers.length > 0) totalPages = Math.max(...numbers);
+        const nextBtn = pag.querySelector('.artdeco-pagination__button--next');
+        const hasNext = nextBtn && nextBtn.getAttribute('aria-disabled') !== 'true' && !nextBtn.disabled;
+        if (totalPages === 1 && hasNext) totalPages = 2;
+        return { totalPages, pageSize: 10 };
+      });
+      // LinkedIn puede mostrar 10 o 25 por página; usar el número obtenido en página 1 para no saltar resultados
+      const pageSize = profiles.length >= 25 ? 25 : (profiles.length > 0 ? 10 : 10);
+      paginationInfo.pageSize = pageSize;
+
+      console.log(`Paginador: ${paginationInfo.totalPages} hoja(s) detectada(s).`);
+      const seenUrls = new Set(profiles.map(p => (p.urlPerfil || '').trim()).filter(Boolean));
+      const baseSearchUrl = searchUrl.replace(/\&start=\d+/, '').replace(/\?start=\d+&/, '?').replace(/\?start=\d+$/, '');
+      const separator = baseSearchUrl.includes('?') ? '&' : '?';
+
+      for (let pageNum = 2; pageNum <= paginationInfo.totalPages; pageNum++) {
+        const start = (pageNum - 1) * paginationInfo.pageSize;
+        const pageUrl = `${baseSearchUrl}${separator}start=${start}`;
+        console.log(`Cargando página ${pageNum}/${paginationInfo.totalPages} (start=${start})...`);
+        await this.page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await this.page.waitForTimeout(4000);
+        await this.page.evaluate(() => {
+          window.scrollTo(0, document.body.scrollHeight / 2);
+        });
+        await this.page.waitForTimeout(1500);
+        await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await this.page.waitForTimeout(1500);
+        const pageProfiles = await this._extractProfilesFromCurrentPage();
+        let added = 0;
+        for (const p of pageProfiles) {
+          const url = (p.urlPerfil || '').trim();
+          if (url && !seenUrls.has(url)) {
+            seenUrls.add(url);
+            profiles.push(p);
+            added++;
+          }
+        }
+        console.log(`  Página ${pageNum}: ${pageProfiles.length} extraídos, ${added} nuevos (total acumulado: ${profiles.length})`);
+        if (pageProfiles.length === 0) break;
+      }
+
+      console.log(`Perfiles encontrados después de extracción (todas las hojas): ${profiles.length}`);
       
-      // Si no encontramos perfiles, intentar diagnóstico
+      // Fallback: si 0 perfiles y la query incluía keywords, reintentar solo con el título del puesto
+      if (profiles.length === 0 && titleOnly && searchQuery !== titleOnly) {
+        const fallbackUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(titleOnly)}&origin=SWITCH_SEARCH_VERTICAL&${geoPeru}`;
+        console.log('⚠ Reintentando búsqueda solo con el título del puesto...');
+        await this.page.goto(fallbackUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await this.page.waitForTimeout(5000);
+        try {
+          await Promise.race([
+            this.page.waitForSelector('div[data-view-name="people-search-result"]', { timeout: 20000 }),
+            this.page.waitForSelector('.reusable-search__result-container', { timeout: 20000 }),
+            this.page.waitForSelector('div[class*="entity-result"]', { timeout: 20000 }),
+            this.page.waitForSelector('a[href*="/in/"]', { timeout: 20000 })
+          ]);
+        } catch (e) { /* continuar */ }
+        await this.page.waitForTimeout(3000);
+        await this.page.evaluate(() => { window.scrollTo(0, document.body.scrollHeight / 2); });
+        await this.page.waitForTimeout(2000);
+        await this.page.evaluate(() => { window.scrollTo(0, document.body.scrollHeight); });
+        await this.page.waitForTimeout(2000);
+        const profilesFallback = await this.page.evaluate(() => {
+          const results = [];
+          const selectors = ['div[data-view-name="people-search-result"]', 'li.entity-result__item', '.reusable-search__result-container', 'li[class*="result"]', 'div[class*="entity-result"]'];
+          let cards = [];
+          for (const sel of selectors) {
+            const found = document.querySelectorAll(sel);
+            if (found.length > 0) { cards = Array.from(found); break; }
+          }
+          if (cards.length === 0) {
+            const links = document.querySelectorAll('a[href*="/in/"]');
+            links.forEach(link => {
+              if (link.href && link.href.includes('/in/') && !link.href.includes('/in/feed')) {
+                const card = link.closest('li') || link.closest('div') || link.parentElement;
+                if (card && !cards.includes(card)) cards.push(card);
+              }
+            });
+          }
+          cards.forEach(card => {
+            try {
+              const nameEl = card.querySelector('a[data-view-name="search-result-lockup-title"], .entity-result__title-text a, a[href*="/in/"]');
+              const name = nameEl && nameEl.innerText ? nameEl.innerText.trim() : 'N/A';
+              const profileUrl = nameEl && nameEl.href ? nameEl.href.split('?')[0] : '';
+              const titleEl = card.querySelector('.entity-result__primary-subtitle, [class*="subtitle"]');
+              const title = titleEl ? titleEl.innerText.trim() : 'N/A';
+              const locEl = card.querySelector('.entity-result__secondary-subtitle, [class*="location"]');
+              const location = locEl ? locEl.innerText.trim() : 'N/A';
+              const imgEl = card.querySelector('img');
+              if ((name !== 'N/A' && name.length > 0) || (profileUrl && profileUrl.includes('/in/'))) {
+                results.push({ nombre: name, titulo: title, ubicacion: location, descripcion: 'N/A', urlPerfil: profileUrl || 'N/A', imagenPerfil: imgEl ? imgEl.src : 'N/A' });
+              }
+            } catch (err) {}
+          });
+          return results;
+        });
+        if (profilesFallback.length > 0) {
+          profiles.push(...profilesFallback);
+          console.log(`✓ Fallback: se obtuvieron ${profilesFallback.length} perfiles con búsqueda por título. Se aplicarán filtros por palabras clave.`);
+        }
+      }
+      
+      // Si aún no hay perfiles, diagnóstico
       if (profiles.length === 0) {
         console.log('⚠ No se encontraron perfiles. Realizando diagnóstico...');
-        const diagnostic = await this.page.evaluate(() => {
-          const info = {
-            url: window.location.href,
-            title: document.title,
-            hasSearchContainer: !!document.querySelector('.search-results-container'),
-            hasReusableSearch: !!document.querySelector('.reusable-search__result-container'),
-            hasEntityResult: !!document.querySelector('.entity-result__item'),
-            allLinks: document.querySelectorAll('a[href*="/in/"]').length,
-            bodyText: document.body.innerText.substring(0, 200)
-          };
-          return info;
-        });
+        const diagnostic = await this.page.evaluate(() => ({
+          url: window.location.href,
+          title: document.title,
+          hasSearchContainer: !!document.querySelector('.search-results-container'),
+          hasReusableSearch: !!document.querySelector('.reusable-search__result-container'),
+          hasEntityResult: !!document.querySelector('.entity-result__item'),
+          allLinks: document.querySelectorAll('a[href*="/in/"]').length,
+          bodyText: document.body.innerText.substring(0, 200)
+        }));
         console.log('Diagnóstico:', JSON.stringify(diagnostic, null, 2));
-        
-        // Verificar si hay un mensaje de "no results"
-        const noResultsMessage = await this.page.evaluate(() => {
-          const bodyText = document.body.innerText.toLowerCase();
-          return bodyText.includes('no results') || 
-                 bodyText.includes('sin resultados') ||
-                 bodyText.includes('no encontramos') ||
-                 bodyText.includes('no encontrado');
-        });
-        
-        if (noResultsMessage) {
-          console.log('⚠ LinkedIn indica que no hay resultados para esta búsqueda.');
+      }
+
+      // Priorizar por palabras clave (no excluir): los que coinciden se barren primero, el resto en orden normal
+      let filteredProfiles = profiles;
+      if (filterKeywords && filterKeywords.length > 0 && profiles.length > 0) {
+        filteredProfiles = this.prioritizeProfilesByKeywords(profiles, filterKeywords);
+        const priorityCount = this.filterProfilesByKeywords(profiles, filterKeywords).length;
+        if (priorityCount > 0) {
+          console.log(`  Prioridad: ${priorityCount} de ${profiles.length} perfiles coinciden con las palabras clave (se barren primero)`);
         }
       }
 
-      // Filtrar por palabras clave si se especifican
-      let filteredProfiles = profiles;
-      if (filterKeywords && filterKeywords.length > 0 && profiles.length > 0) {
-        filteredProfiles = this.filterProfilesByKeywords(profiles, filterKeywords);
-        console.log(`  Filtrados: ${filteredProfiles.length} de ${profiles.length} perfiles coinciden con las palabras clave`);
+      // Filtrar por exclusiones si se especifican
+      if (exclusionUrls && exclusionUrls.length > 0 && filteredProfiles.length > 0) {
+        const beforeExclusion = filteredProfiles.length;
+        filteredProfiles = filteredProfiles.filter(profile => !shouldExcludeProfile(profile, exclusionUrls));
+        const excludedCount = beforeExclusion - filteredProfiles.length;
+        if (excludedCount > 0) {
+          console.log(`  Excluidos: ${excludedCount} perfiles por estar en la lista de exclusiones`);
+        }
       }
 
       // Limitar resultados
@@ -607,6 +586,104 @@ class LinkedInScraper {
     }
   }
 
+  // Extrae los perfiles visibles en la página actual de búsqueda (reutilizable para paginación)
+  async _extractProfilesFromCurrentPage() {
+    return this.page.evaluate(() => {
+      const results = [];
+      const selectors = [
+        'div[data-view-name="people-search-result"]',
+        'div.dea36951[data-view-name="people-search-result"]',
+        'li.entity-result__item',
+        '.entity-result__item',
+        'li.reusable-search__result-container',
+        '.reusable-search__result-container',
+        'li[class*="result"]',
+        'div[class*="entity-result"]',
+        '[class*="search-result"]',
+        'li[data-chameleon-result-urn]',
+        'div[data-chameleon-result-urn]'
+      ];
+      let profileCards = [];
+      for (const selector of selectors) {
+        const foundCards = document.querySelectorAll(selector);
+        if (foundCards.length > 0) {
+          profileCards = Array.from(foundCards);
+          break;
+        }
+      }
+      if (profileCards.length === 0) {
+        const allLinks = document.querySelectorAll('a[href*="/in/"]');
+        const cardsFromLinks = [];
+        allLinks.forEach((link) => {
+          if (link.href && link.href.includes('/in/') && !link.href.includes('/in/feed') && !link.href.includes('/in/recruiter')) {
+            const card = link.closest('li') || link.closest('div') || link.parentElement;
+            if (card && !cardsFromLinks.includes(card)) cardsFromLinks.push(card);
+          }
+        });
+        profileCards = cardsFromLinks;
+      }
+      if (!Array.isArray(profileCards)) profileCards = Array.from(profileCards);
+      profileCards.forEach((card, index) => {
+        try {
+          const nameSelectors = ['a[data-view-name="search-result-lockup-title"]', '.entity-result__title-text a', 'a[href*="/in/"][aria-label]', 'a[href*="/in/"]'];
+          let nameElement = null;
+          for (const sel of nameSelectors) {
+            nameElement = card.querySelector(sel);
+            if (nameElement && nameElement.innerText && nameElement.innerText.trim().length > 0) break;
+          }
+          if (!nameElement || !nameElement.innerText || nameElement.innerText.trim().length === 0) {
+            const profileLink = card.querySelector('a[href*="/in/"]:not([href*="/in/feed"])');
+            if (profileLink) nameElement = profileLink;
+          }
+          let name = nameElement && nameElement.innerText ? nameElement.innerText.trim() : 'N/A';
+          const profileUrl = nameElement && nameElement.href ? nameElement.href.split('?')[0] : 'N/A';
+          if (name === 'N/A' && profileUrl !== 'N/A' && nameElement) {
+            const ariaLabel = nameElement.getAttribute('aria-label');
+            if (ariaLabel) {
+              const nameFromAria = ariaLabel.replace(/^Ver perfil de\s*/i, '').trim();
+              if (nameFromAria.length > 0) name = nameFromAria;
+            }
+          }
+          const titleSelectors = ['.entity-result__primary-subtitle', '[class*="subtitle"]'];
+          let titleElement = null;
+          for (const sel of titleSelectors) {
+            titleElement = card.querySelector(sel);
+            if (titleElement && titleElement.innerText) {
+              const text = titleElement.innerText.trim().toLowerCase();
+              if (!text.match(/^(perú|peru|lima|madrid|españa|spain|área metropolitana|metropolitan area)/i)) break;
+            }
+          }
+          const title = titleElement ? titleElement.innerText.trim() : 'N/A';
+          const locationSelectors = ['.entity-result__secondary-subtitle', '[class*="location"]', '[class*="secondary"]'];
+          let locationElement = null;
+          for (const sel of locationSelectors) {
+            locationElement = card.querySelector(sel);
+            if (locationElement && locationElement.innerText && locationElement.innerText.trim().length > 0) break;
+          }
+          const location = locationElement ? locationElement.innerText.trim() : 'N/A';
+          const descSelectors = ['.entity-result__summary', '[class*="summary"]'];
+          let descriptionElement = null;
+          for (const sel of descSelectors) {
+            descriptionElement = card.querySelector(sel);
+            if (descriptionElement) break;
+          }
+          const description = descriptionElement ? descriptionElement.innerText.trim() : 'N/A';
+          const imageSelectors = ['.entity-result__universal-image img', 'figure img', 'img[alt*="profile"]'];
+          let imageElement = null;
+          for (const sel of imageSelectors) {
+            imageElement = card.querySelector(sel);
+            if (imageElement) break;
+          }
+          const imageUrl = imageElement ? imageElement.src : 'N/A';
+          if ((name !== 'N/A' && name.length > 0) || (profileUrl !== 'N/A' && profileUrl.includes('/in/'))) {
+            results.push({ nombre: name, titulo: title, ubicacion: location, descripcion: description, urlPerfil: profileUrl, imagenPerfil: imageUrl });
+          }
+        } catch (err) {}
+      });
+      return results;
+    });
+  }
+
   // Filtrar perfiles por palabras clave en la descripción, título o nombre
   filterProfilesByKeywords(profiles, keywords) {
     if (!keywords || keywords.length === 0) {
@@ -630,6 +707,17 @@ class LinkedInScraper {
         return searchText.includes(keyword);
       });
     });
+  }
+
+  // Ordenar perfiles poniendo primero los que coinciden con las palabras clave (prioridad de barrido, no exclusión)
+  prioritizeProfilesByKeywords(profiles, keywords) {
+    if (!keywords || keywords.length === 0) {
+      return profiles;
+    }
+    const matching = this.filterProfilesByKeywords(profiles, keywords);
+    const matchingUrls = new Set(matching.map(p => (p.urlPerfil || '').trim()).filter(Boolean));
+    const rest = profiles.filter(p => !matchingUrls.has((p.urlPerfil || '').trim()));
+    return [...matching, ...rest];
   }
 
   async getProfileDetails(profileUrl) {
@@ -2422,6 +2510,119 @@ class LinkedInScraper {
   }
 }
 
+// Función para leer URLs de exclusión desde un archivo
+function readExclusionUrls(filePath) {
+  try {
+    if (!existsSync(filePath)) {
+      return [];
+    }
+    
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const extension = filePath.split('.').pop().toLowerCase();
+    
+    let urls = [];
+    
+    if (extension === 'json') {
+      const data = JSON.parse(content);
+      // Si es un array de strings (URLs)
+      if (Array.isArray(data)) {
+        urls = data;
+      }
+      // Si es un objeto con una propiedad 'urls' o 'exclusiones'
+      else if (data.urls && Array.isArray(data.urls)) {
+        urls = data.urls;
+      }
+      else if (data.exclusiones && Array.isArray(data.exclusiones)) {
+        urls = data.exclusiones;
+      }
+      // Si es un array de objetos con propiedad 'url' o 'urlPerfil'
+      else if (Array.isArray(data) && data[0] && typeof data[0] === 'object') {
+        urls = data.map(item => item.url || item.urlPerfil || item.linkedin || item.perfil).filter(Boolean);
+      }
+    } else if (extension === 'csv' || extension === 'txt') {
+      // Leer CSV o TXT (una URL por línea)
+      urls = content
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && !line.startsWith('#'));
+    }
+    
+    // Normalizar URLs y filtrar solo las de LinkedIn
+    return urls
+      .map(url => {
+        if (typeof url !== 'string') return null;
+        
+        // Limpiar la URL
+        url = url.trim();
+        
+        // Agregar https:// si no tiene protocolo
+        if (!url.startsWith('http')) {
+          url = 'https://' + url;
+        }
+        
+        // Verificar que sea una URL de LinkedIn
+        if (!url.includes('linkedin.com/in/')) {
+          return null;
+        }
+        
+        // Normalizar: remover parámetros de query y fragmentos
+        try {
+          const urlObj = new URL(url);
+          return `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`.replace(/\/$/, '');
+        } catch (e) {
+          return null;
+        }
+      })
+      .filter(Boolean);
+      
+  } catch (error) {
+    console.error(`Error leyendo archivo de exclusiones ${filePath}:`, error.message);
+    return [];
+  }
+}
+
+// Función para normalizar URLs de LinkedIn para comparación
+function normalizeLinkedInUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  
+  try {
+    // Si no tiene protocolo, agregarlo
+    if (!url.startsWith('http')) {
+      url = 'https://' + url;
+    }
+    
+    const urlObj = new URL(url);
+    
+    // Solo procesar URLs de LinkedIn
+    if (!urlObj.hostname.includes('linkedin.com')) {
+      return '';
+    }
+    
+    // Normalizar: protocolo + host + pathname (sin query params ni fragmentos)
+    return `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`.replace(/\/$/, '');
+  } catch (e) {
+    return '';
+  }
+}
+
+// Función para verificar si un perfil debe ser excluido
+function shouldExcludeProfile(profile, exclusionUrls) {
+  if (!exclusionUrls || exclusionUrls.length === 0) {
+    return false;
+  }
+  
+  const profileUrl = normalizeLinkedInUrl(profile.urlPerfil);
+  if (!profileUrl) {
+    return false;
+  }
+  
+  // Verificar si la URL del perfil está en la lista de exclusiones
+  return exclusionUrls.some(excludeUrl => {
+    const normalizedExcludeUrl = normalizeLinkedInUrl(excludeUrl);
+    return normalizedExcludeUrl && profileUrl === normalizedExcludeUrl;
+  });
+}
+
 // Función para leer nombres desde un archivo
 function readNamesFromFile(filePath) {
   try {
@@ -2463,7 +2664,8 @@ async function massiveSearch(scraper, names, options = {}) {
     getFullDetails = true, // Por defecto obtener detalles completos
     delayBetweenSearches = 5000, // 5 segundos por defecto
     maxProfilesPerSearch = 25, // Límite de perfiles por búsqueda
-    filterKeywords = null // Palabras clave para filtrar
+    filterKeywords = null, // Palabras clave para filtrar
+    exclusionUrls = [] // URLs de LinkedIn para excluir
   } = options;
   
   const allResults = [];
@@ -2472,7 +2674,8 @@ async function massiveSearch(scraper, names, options = {}) {
     completed: 0,
     failed: 0,
     profilesFound: 0,
-    profilesFiltered: 0
+    profilesFiltered: 0,
+    profilesExcluded: 0
   };
   
   console.log(`\n=== Iniciando búsqueda masiva ===`);
@@ -2481,6 +2684,9 @@ async function massiveSearch(scraper, names, options = {}) {
   console.log(`Obtener detalles completos: ${getFullDetails ? 'Sí' : 'No'}`);
   if (filterKeywords && filterKeywords.length > 0) {
     console.log(`Filtros de palabras clave: ${filterKeywords.join(', ')}`);
+  }
+  if (exclusionUrls && exclusionUrls.length > 0) {
+    console.log(`URLs de exclusión cargadas: ${exclusionUrls.length} perfiles`);
   }
   console.log(`Máximo de perfiles por búsqueda: ${maxProfilesPerSearch}\n`);
   
@@ -2493,11 +2699,12 @@ async function massiveSearch(scraper, names, options = {}) {
       const profiles = await scraper.searchPerson(name, {
         getFullDetails: getFullDetails,
         filterKeywords: filterKeywords,
-        maxResults: maxProfilesPerSearch
+        maxResults: maxProfilesPerSearch,
+        exclusionUrls: exclusionUrls
       });
       
       if (profiles.length === 0) {
-        console.log(`  ⚠ No se encontraron perfiles para "${name}"${filterKeywords ? ' que coincidan con los filtros' : ''}`);
+        console.log(`  ⚠ No se encontraron perfiles para "${name}".`);
         stats.failed++;
       } else {
         console.log(`  ✓ Encontrados ${profiles.length} perfiles`);
@@ -2540,6 +2747,8 @@ async function massiveSearch(scraper, names, options = {}) {
 
 // Función principal
 async function main() {
+  setupHistoryLog();
+
   const scraper = new LinkedInScraper();
   
   try {
@@ -2593,6 +2802,82 @@ async function main() {
     if (keywordsArg) {
       const keywordsValue = keywordsArg.split('=')[1];
       filterKeywords = keywordsValue.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    }
+    
+    // Obtener exclusiones (archivo o URLs directas)
+    const excludeFileArg = process.argv.find(arg => arg.startsWith('--exclude-file='));
+    const excludeUrlsArg = process.argv.find(arg => arg.startsWith('--exclude-urls=') || arg.startsWith('--exclude='));
+    let exclusionUrls = [];
+    
+    // Cargar desde archivo si se especifica --exclude-file
+    if (excludeFileArg) {
+      const excludeFile = excludeFileArg.split('=')[1];
+      console.log(`Cargando exclusiones desde archivo: ${excludeFile}`);
+      exclusionUrls = readExclusionUrls(excludeFile);
+      if (exclusionUrls.length > 0) {
+        console.log(`✓ Cargadas ${exclusionUrls.length} URLs de exclusión desde archivo`);
+      } else {
+        console.log('⚠ No se encontraron URLs de exclusión válidas en el archivo');
+      }
+    }
+    // Cargar URLs directas si se especifica --exclude-urls o --exclude
+    else if (excludeUrlsArg) {
+      const excludeValue = excludeUrlsArg.split('=')[1];
+      
+      // Verificar si el valor parece ser un archivo (tiene extensión) o URLs directas
+      const isFile = excludeValue.includes('.') && !excludeValue.includes('linkedin.com');
+      
+      if (isFile) {
+        // Es un archivo
+        console.log(`Cargando exclusiones desde archivo: ${excludeValue}`);
+        exclusionUrls = readExclusionUrls(excludeValue);
+        if (exclusionUrls.length > 0) {
+          console.log(`✓ Cargadas ${exclusionUrls.length} URLs de exclusión desde archivo`);
+        } else {
+          console.log('⚠ No se encontraron URLs de exclusión válidas en el archivo');
+        }
+      } else {
+        // Son URLs directas separadas por coma
+        console.log('Procesando URLs de exclusión directas...');
+        const rawUrls = excludeValue.split(',').map(url => url.trim()).filter(url => url.length > 0);
+        
+        // Normalizar y validar URLs
+        exclusionUrls = rawUrls
+          .map(url => {
+            // Limpiar la URL
+            url = url.trim();
+            
+            // Agregar https:// si no tiene protocolo
+            if (!url.startsWith('http')) {
+              url = 'https://' + url;
+            }
+            
+            // Verificar que sea una URL de LinkedIn
+            if (!url.includes('linkedin.com/in/')) {
+              console.log(`⚠ URL ignorada (no es de LinkedIn): ${url}`);
+              return null;
+            }
+            
+            // Normalizar: remover parámetros de query y fragmentos
+            try {
+              const urlObj = new URL(url);
+              return `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`.replace(/\/$/, '');
+            } catch (e) {
+              console.log(`⚠ URL inválida ignorada: ${url}`);
+              return null;
+            }
+          })
+          .filter(Boolean);
+          
+        if (exclusionUrls.length > 0) {
+          console.log(`✓ Procesadas ${exclusionUrls.length} URLs de exclusión directas`);
+          exclusionUrls.forEach((url, index) => {
+            console.log(`  ${index + 1}. ${url}`);
+          });
+        } else {
+          console.log('⚠ No se encontraron URLs de exclusión válidas');
+        }
+      }
     }
     
     // Obtener máximo de resultados por búsqueda (--max=N o --max N)
@@ -2675,11 +2960,22 @@ async function main() {
       console.log('  --max=N                 Máximo de perfiles por búsqueda (default: 25)');
       console.log('  --delay=N               Delay en segundos entre búsquedas (default: 5)');
       console.log('  --url=URL               Obtener detalles directamente desde URL de perfil');
+      console.log('  --exclude=urls_o_archivo Excluir perfiles: URLs separadas por coma o archivo');
+      console.log('  --exclude-urls=urls     Excluir perfiles por URLs (separadas por coma)');
+      console.log('  --exclude-file=archivo  Excluir perfiles por URLs desde archivo');
       console.log('  --clear-session         Limpiar sesión guardada (forzar nuevo login)');
       console.log('');
       console.log('Ejemplos:');
       console.log('  # Buscar "Juan" y filtrar por "desarrollador" o "programador"');
       console.log('  node index.js "Juan" --keywords="desarrollador,programador"');
+      console.log('');
+      console.log('  # Buscar excluyendo perfiles específicos por URLs directas');
+      console.log('  node index.js "Juan" --exclude="linkedin.com/in/usuario1,linkedin.com/in/usuario2"');
+      console.log('  node index.js "María" --exclude-urls="https://linkedin.com/in/excluir1,linkedin.com/in/excluir2"');
+      console.log('');
+      console.log('  # Buscar excluyendo perfiles desde archivo');
+      console.log('  node index.js "Juan" --exclude-file="exclusiones.json"');
+      console.log('  node index.js nombres.json --exclude="perfiles_excluir.txt"');
       console.log('');
       console.log('  # Obtener detalles de un perfil específico por URL');
       console.log('  npm start "https://www.linkedin.com/in/juan-perez/"');
@@ -2687,8 +2983,9 @@ async function main() {
       console.log('  node index.js "https://www.linkedin.com/in/juan-perez/"');
       console.log('  node index.js --url="https://www.linkedin.com/in/juan-perez/"');
       console.log('');
-      console.log('  # Búsqueda masiva filtrando por palabras clave');
-      console.log('  node index.js nombres.json --keywords="marketing,digital" --max=20');
+      console.log('  # Búsqueda masiva con filtros y exclusiones');
+      console.log('  node index.js nombres.json --keywords="marketing,digital" --max=20 --exclude-file="ya_contactados.json"');
+      console.log('  node index.js candidatos.csv --exclude="linkedin.com/in/user1,linkedin.com/in/user2" --delay=3');
       await scraper.close();
       return;
     }
@@ -2802,7 +3099,8 @@ async function main() {
         getFullDetails: getDetails,
         delayBetweenSearches: delay,
         maxProfilesPerSearch: maxResults,
-        filterKeywords: filterKeywords
+        filterKeywords: filterKeywords,
+        exclusionUrls: exclusionUrls
       });
       
       // Guardar resultados
@@ -2823,7 +3121,10 @@ async function main() {
       console.log(`Fallidas: ${stats.failed}`);
       console.log(`Perfiles encontrados: ${stats.profilesFound}`);
       if (filterKeywords) {
-        console.log(`Perfiles que coinciden con filtros: ${stats.profilesFiltered}`);
+        console.log(`Perfiles priorizados por palabras clave: ${stats.profilesFiltered}`);
+      }
+      if (exclusionUrls && exclusionUrls.length > 0) {
+        console.log(`Perfiles excluidos: ${stats.profilesExcluded}`);
       }
       console.log(`\n✓ Resultados guardados en: ${outputFile}`);
       
@@ -2832,17 +3133,18 @@ async function main() {
       const searchName = names[0];
       console.log(`\n=== Buscando: ${searchName} ===\n`);
       if (filterKeywords && filterKeywords.length > 0) {
-        console.log(`Filtros aplicados: ${filterKeywords.join(', ')}\n`);
+        console.log(`Palabras clave para priorizar barrido: ${filterKeywords.join(', ')}\n`);
       }
       
       const profiles = await scraper.searchPerson(searchName, {
         getFullDetails: getDetails,
         filterKeywords: filterKeywords,
-        maxResults: maxResults
+        maxResults: maxResults,
+        exclusionUrls: exclusionUrls
       });
       
       if (profiles.length === 0) {
-        console.log(`No se encontraron perfiles${filterKeywords ? ' que coincidan con los filtros especificados' : ''}.`);
+        console.log(`No se encontraron perfiles.`);
       } else {
         console.log(`\n✓ Se encontraron ${profiles.length} perfiles:\n`);
         
@@ -2875,6 +3177,12 @@ async function main() {
     console.log('\nCerrando navegador en 5 segundos...');
     await new Promise(resolve => setTimeout(resolve, 5000));
     await scraper.close();
+    if (historyLogStream) {
+      try {
+        historyLogStream.write(`[${new Date().toISOString()}] EJECUCIÓN FINALIZADA\n`);
+        historyLogStream.end();
+      } catch (e) {}
+    }
   }
 }
 

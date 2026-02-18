@@ -1,0 +1,287 @@
+
+============================================================
+[2026-02-18T07:12:02.851Z] EJECUCIÓN INICIADA - process.argv: C:\Users\pc\Documents\pruebaSccraping\index.js Gerente de Tecnología e Innovación --keywords=gerente,tecnología,innovación,manager,ingeniería,sistemas,informática,ciencias,definir,ejecutar,estrategia,liderar,lima, perú (híbrido) --max=5 --delay=1 --exclude-urls=https://www.linkedin.com/in/sandrorisso,https://www.linkedin.com/in/virginia-blume-b883646b,https://www.linkedin.com/in/tony-pinedo-revilla,https://www.linkedin.com/in/miguelbandach,https://www.linkedin.com/in/manuelcamones,https://www.linkedin.com/in/carlos-chiri-342ab594,https://www.linkedin.com/in/razielcaparo,https://www.linkedin.com/in/walter-r%C3%ADmac-narro-265a4857,https://www.linkedin.com/in/jorge-pazos,https://www.linkedin.com/in/amendozao
+============================================================
+[2026-02-18T07:12:02.852Z] [LOG] Iniciando navegador...
+[2026-02-18T07:12:03.309Z] [LOG] ✓ Cookies cargadas desde sesión anterior
+[2026-02-18T07:12:03.309Z] [LOG] Verificando sesión activa...
+[2026-02-18T07:12:11.434Z] [LOG] ✓ Sesión activa encontrada. Continuando sin login...
+[2026-02-18T07:12:11.434Z] [LOG] Procesando URLs de exclusión directas...
+[2026-02-18T07:12:11.434Z] [LOG] ✓ Procesadas 10 URLs de exclusión directas
+[2026-02-18T07:12:11.435Z] [LOG]   1. https://www.linkedin.com/in/sandrorisso
+[2026-02-18T07:12:11.435Z] [LOG]   2. https://www.linkedin.com/in/virginia-blume-b883646b
+[2026-02-18T07:12:11.435Z] [LOG]   3. https://www.linkedin.com/in/tony-pinedo-revilla
+[2026-02-18T07:12:11.435Z] [LOG]   4. https://www.linkedin.com/in/miguelbandach
+[2026-02-18T07:12:11.435Z] [LOG]   5. https://www.linkedin.com/in/manuelcamones
+[2026-02-18T07:12:11.435Z] [LOG]   6. https://www.linkedin.com/in/carlos-chiri-342ab594
+[2026-02-18T07:12:11.435Z] [LOG]   7. https://www.linkedin.com/in/razielcaparo
+[2026-02-18T07:12:11.435Z] [LOG]   8. https://www.linkedin.com/in/walter-r%C3%ADmac-narro-265a4857
+[2026-02-18T07:12:11.435Z] [LOG]   9. https://www.linkedin.com/in/jorge-pazos
+[2026-02-18T07:12:11.435Z] [LOG]   10. https://www.linkedin.com/in/amendozao
+[2026-02-18T07:12:11.435Z] [LOG] [DEBUG] --max detectado: 5 perfiles máximo
+[2026-02-18T07:12:11.435Z] [LOG] [DEBUG] process.argv: ["C:\\nvm4w\\nodejs\\node.exe","C:\\Users\\pc\\Documents\\pruebaSccraping\\index.js","Gerente de Tecnología e Innovación","--keywords=gerente,tecnología,innovación,manager,ingeniería,sistemas,informática,ciencias,definir,ejecutar,estrategia,liderar,lima, perú (híbrido)","--max=5","--delay=1","--exclude-urls=https://www.linkedin.com/in/sandrorisso,https://www.linkedin.com/in/virginia-blume-b883646b,https://www.linkedin.com/in/tony-pinedo-revilla,https://www.linkedin.com/in/miguelbandach,https://www.linkedin.com/in/manuelcamones,https://www.linkedin.com/in/carlos-chiri-342ab594,https://www.linkedin.com/in/razielcaparo,https://www.linkedin.com/in/walter-r%C3%ADmac-narro-265a4857,https://www.linkedin.com/in/jorge-pazos,https://www.linkedin.com/in/amendozao"]
+[2026-02-18T07:12:11.436Z] [LOG] 
+=== Buscando: Gerente de Tecnología e Innovación ===
+
+[2026-02-18T07:12:11.436Z] [LOG] Palabras clave para priorizar barrido: gerente, tecnología, innovación, manager, ingeniería, sistemas, informática, ciencias, definir, ejecutar, estrategia, liderar, lima, perú (híbrido)
+
+[2026-02-18T07:12:11.436Z] [LOG] Buscando: Gerente de Tecnología e Innovación...
+[2026-02-18T07:12:11.436Z] [LOG] Palabras clave para priorizar barrido: gerente, tecnología, innovación, manager, ingeniería, sistemas, informática, ciencias, definir, ejecutar, estrategia, liderar, lima, perú (híbrido)
+[2026-02-18T07:12:11.437Z] [LOG] Query enviada a LinkedIn: Gerente de Tecnología e Innovación gerente tecnología innovación manager ingenie...
+[2026-02-18T07:12:13.253Z] [LOG] URL actual: https://www.linkedin.com/search/results/people/?keywords=Gerente%20de%20Tecnolog%C3%ADa%20e%20Innovaci%C3%B3n%20gerente%20tecnolog%C3%ADa%20innovaci%C3%B3n%20manager%20ingenier%C3%ADa&origin=SWITCH_SEARCH_VERTICAL&geoUrn=%5B%22102927786%22%5D
+[2026-02-18T07:12:13.253Z] [LOG] Esperando a que carguen los resultados...
+[2026-02-18T07:12:13.560Z] [LOG] ✓ Contenedor de resultados encontrado
+[2026-02-18T07:12:17.562Z] [LOG] Haciendo scroll para cargar más resultados...
+[2026-02-18T07:12:23.569Z] [LOG] Extrayendo información de perfiles (página 1)...
+[2026-02-18T07:12:23.571Z] [LOG] Perfiles encontrados en página 1: 10
+[2026-02-18T07:12:25.585Z] [LOG] Paginador: 1 hoja(s) detectada(s).
+[2026-02-18T07:12:25.585Z] [LOG] Perfiles encontrados después de extracción (todas las hojas): 10
+[2026-02-18T07:12:25.586Z] [LOG]   Excluidos: 5 perfiles por estar en la lista de exclusiones
+[2026-02-18T07:12:25.586Z] [LOG] [DEBUG searchPerson] maxResults=5, filteredProfiles.length=5
+[2026-02-18T07:12:25.586Z] [LOG]   Obteniendo detalles completos de 5 perfiles...
+[2026-02-18T07:12:25.586Z] [LOG]     [1/5] Jorge Valdivia
+[2026-02-18T07:12:25.587Z] [LOG] Obteniendo detalles del perfil: https://www.linkedin.com/in/jorge-valdivia-75a3968/
+[2026-02-18T07:12:30.117Z] [LOG]   URL del perfil: https://www.linkedin.com/in/jorge-valdivia-75a3968/
+[2026-02-18T07:12:30.117Z] [LOG]   Cargando contenido completo del perfil...
+[2026-02-18T07:12:34.033Z] [LOG]   Expandiendo secciones "Ver más"...
+[2026-02-18T07:12:34.039Z] [LOG]   Sección de experiencia encontrada, expandiendo...
+[2026-02-18T07:12:41.072Z] [LOG]   Haciendo scroll dentro de la sección de experiencia...
+[2026-02-18T07:12:48.589Z] [LOG]   Buscando botón "Mostrar todas las experiencias"...
+[2026-02-18T07:12:48.590Z] [LOG]   Encontrado botón "Mostrar todas las experiencias", navegando a: https://www.linkedin.com/in/jorge-valdivia-75a3968/overlay/urn:li:fsd_skill:(ACoAAAF66bYB99SqoACY43wYCx3hbfGn8BrwEDo,536562086)/skill-insights?profileUrn=urn%3Ali%3Afsd_profile%3AACoAAAF66bYB99SqoACY43wYCx3hbfGn8BrwEDo&tabIndex=0&modalTabIndex=0
+[2026-02-18T07:12:56.234Z] [LOG]   Expandidas 0 descripciones
+[2026-02-18T07:13:00.249Z] [LOG]   Intentando obtener información de contacto...
+[2026-02-18T07:13:00.249Z] [LOG]   Navegando a modal de contacto: https://www.linkedin.com/in/jorge-valdivia-75a3968/overlay/contact-info/
+[2026-02-18T07:13:04.398Z] [LOG]   Modal de contacto encontrado
+[2026-02-18T07:13:04.400Z] [LOG]   Información de contacto extraída: email=N/A, teléfono=N/A, sitio=https://www.credential.net/72b737ef-8c35-453e-b655-4d19c9c8a3dc
+[2026-02-18T07:13:07.553Z] [LOG]   Nombre del perfil extraído: Jorge Valdivia
+[2026-02-18T07:13:07.553Z] [LOG]   Obteniendo experiencia desde: https://www.linkedin.com/in/jorge-valdivia-75a3968/details/experience/
+[2026-02-18T07:13:15.022Z] [LOG]   Experiencia extraída desde details/experience: 7 entradas
+[2026-02-18T07:13:18.087Z] [LOG]   Experiencia laboral tomada de /details/experience/: 7 entradas
+[2026-02-18T07:13:20.091Z] [LOG]     [2/5] Miguel Angel Sam Marcos
+[2026-02-18T07:13:20.091Z] [LOG] Obteniendo detalles del perfil: https://www.linkedin.com/in/miguelsam/
+[2026-02-18T07:13:24.126Z] [LOG]   URL del perfil: https://www.linkedin.com/in/miguelsam/
+[2026-02-18T07:13:24.127Z] [LOG]   Cargando contenido completo del perfil...
+[2026-02-18T07:13:28.037Z] [LOG]   Expandiendo secciones "Ver más"...
+[2026-02-18T07:13:28.044Z] [LOG]   Sección de experiencia encontrada, expandiendo...
+[2026-02-18T07:13:35.077Z] [LOG]   Haciendo scroll dentro de la sección de experiencia...
+[2026-02-18T07:13:42.600Z] [LOG]   Buscando botón "Mostrar todas las experiencias"...
+[2026-02-18T07:13:42.602Z] [LOG]   No se encontró botón "Mostrar todas las experiencias"
+[2026-02-18T07:13:44.616Z] [LOG]   Intentando obtener información de contacto...
+[2026-02-18T07:13:44.617Z] [LOG]   Navegando a modal de contacto: https://www.linkedin.com/in/miguelsam/overlay/contact-info/
+[2026-02-18T07:13:48.746Z] [LOG]   Modal de contacto encontrado
+[2026-02-18T07:13:48.748Z] [LOG]   Información de contacto extraída: email=N/A, teléfono=N/A, sitio=https://learn.microsoft.com/api/credentials/share/es-mx/MiguelAngelSamMarcos-3831/CB128CDD09F3367F?sharingId=EBA79DE7023C9056
+[2026-02-18T07:13:51.603Z] [LOG]   Nombre del perfil extraído: Miguel Angel Sam Marcos
+[2026-02-18T07:13:51.604Z] [LOG]   Obteniendo experiencia desde: https://www.linkedin.com/in/miguelsam/details/experience/
+[2026-02-18T07:13:59.308Z] [LOG]   Experiencia extraída desde details/experience: 5 entradas
+[2026-02-18T07:14:02.348Z] [LOG]   Experiencia laboral tomada de /details/experience/: 5 entradas
+[2026-02-18T07:14:04.349Z] [LOG]     [3/5] Juan Gualberto Aragón Gibaja
+[2026-02-18T07:14:04.349Z] [LOG] Obteniendo detalles del perfil: https://www.linkedin.com/in/juan-gualberto-arag%C3%B3n-gibaja-25126425/
+[2026-02-18T07:14:08.463Z] [LOG]   URL del perfil: https://www.linkedin.com/in/juan-gualberto-arag%C3%B3n-gibaja-25126425/
+[2026-02-18T07:14:08.463Z] [LOG]   Cargando contenido completo del perfil...
+[2026-02-18T07:14:12.376Z] [LOG]   Expandiendo secciones "Ver más"...
+[2026-02-18T07:14:12.384Z] [LOG]   Sección de experiencia encontrada, expandiendo...
+[2026-02-18T07:14:19.403Z] [LOG]   Haciendo scroll dentro de la sección de experiencia...
+[2026-02-18T07:14:26.926Z] [LOG]   Buscando botón "Mostrar todas las experiencias"...
+[2026-02-18T07:14:26.927Z] [LOG]   Encontrado botón "Mostrar todas las experiencias", navegando a: https://www.linkedin.com/in/juan-gualberto-arag%C3%B3n-gibaja-25126425/details/experience?profileUrn=urn%3Ali%3Afsd_profile%3AACoAAAUy6l0BBwc1IcrIZBW0qZtQmF-N77hggZ4
+[2026-02-18T07:14:33.866Z] [LOG]   Expandidas 0 descripciones
+[2026-02-18T07:14:37.868Z] [LOG]   Intentando obtener información de contacto...
+[2026-02-18T07:14:37.868Z] [LOG]   Navegando a modal de contacto: https://www.linkedin.com/in/juan-gualberto-arag%C3%B3n-gibaja-25126425/overlay/contact-info/
+[2026-02-18T07:14:42.003Z] [LOG]   Modal de contacto encontrado
+[2026-02-18T07:14:42.005Z] [LOG]   Información de contacto extraída: email=N/A, teléfono=N/A, sitio=N/A
+[2026-02-18T07:14:45.144Z] [LOG]   Nombre del perfil extraído: Juan Gualberto Aragón Gibaja
+[2026-02-18T07:14:45.144Z] [LOG]   Obteniendo experiencia desde: https://www.linkedin.com/in/juan-gualberto-arag%C3%B3n-gibaja-25126425/details/experience/
+[2026-02-18T07:14:52.771Z] [LOG]   Experiencia extraída desde details/experience: 0 entradas
+[2026-02-18T07:14:58.012Z] [LOG]     [4/5] Jose Yupan
+[2026-02-18T07:14:58.012Z] [LOG] Obteniendo detalles del perfil: https://www.linkedin.com/in/jose-yupan-4b86a831/
+[2026-02-18T07:15:02.242Z] [LOG]   URL del perfil: https://www.linkedin.com/in/jose-yupan-4b86a831/
+[2026-02-18T07:15:02.242Z] [LOG]   Cargando contenido completo del perfil...
+[2026-02-18T07:15:06.161Z] [LOG]   Expandiendo secciones "Ver más"...
+[2026-02-18T07:15:06.169Z] [LOG]   Sección de experiencia encontrada, expandiendo...
+[2026-02-18T07:15:13.206Z] [LOG]   Haciendo scroll dentro de la sección de experiencia...
+[2026-02-18T07:15:20.726Z] [LOG]   Buscando botón "Mostrar todas las experiencias"...
+[2026-02-18T07:15:20.727Z] [LOG]   Encontrado botón "Mostrar todas las experiencias", navegando a: https://www.linkedin.com/in/jose-yupan-4b86a831/details/experience?profileUrn=urn%3Ali%3Afsd_profile%3AACoAAAav-swB6Oy5aNsRBWZjifRaTXWyXFRd49w
+[2026-02-18T07:15:27.861Z] [LOG]   Expandidas 0 descripciones
+[2026-02-18T07:15:31.865Z] [LOG]   Intentando obtener información de contacto...
+[2026-02-18T07:15:31.865Z] [LOG]   Navegando a modal de contacto: https://www.linkedin.com/in/jose-yupan-4b86a831/overlay/contact-info/
+[2026-02-18T07:15:36.406Z] [LOG]   Modal de contacto encontrado
+[2026-02-18T07:15:36.408Z] [LOG]   Información de contacto extraída: email=N/A, teléfono=N/A, sitio=https://catalog-education.oracle.com/pls/certview/sharebadge?id=A8098E4735D01FB7F4163816B42945A9A14F01C6784F58CC64BF66F8CFCBEF82
+[2026-02-18T07:15:39.766Z] [LOG]   Nombre del perfil extraído: Jose Yupan
+[2026-02-18T07:15:39.766Z] [LOG]   Obteniendo experiencia desde: https://www.linkedin.com/in/jose-yupan-4b86a831/details/experience/
+[2026-02-18T07:15:54.492Z] [LOG]   Experiencia extraída desde details/experience: 15 entradas
+[2026-02-18T07:15:57.954Z] [LOG]   Experiencia laboral tomada de /details/experience/: 15 entradas
+[2026-02-18T07:15:59.967Z] [LOG]     [5/5] Antonio Moreto
+[2026-02-18T07:15:59.967Z] [LOG] Obteniendo detalles del perfil: https://www.linkedin.com/in/amoretof/
+[2026-02-18T07:16:04.201Z] [LOG]   URL del perfil: https://www.linkedin.com/in/amoretof/
+[2026-02-18T07:16:04.201Z] [LOG]   Cargando contenido completo del perfil...
+[2026-02-18T07:16:08.114Z] [LOG]   Expandiendo secciones "Ver más"...
+[2026-02-18T07:16:08.123Z] [LOG]   Sección de experiencia encontrada, expandiendo...
+[2026-02-18T07:16:15.152Z] [LOG]   Haciendo scroll dentro de la sección de experiencia...
+[2026-02-18T07:16:22.674Z] [LOG]   Buscando botón "Mostrar todas las experiencias"...
+[2026-02-18T07:16:22.675Z] [LOG]   No se encontró botón "Mostrar todas las experiencias"
+[2026-02-18T07:16:24.689Z] [LOG]   Intentando obtener información de contacto...
+[2026-02-18T07:16:24.689Z] [LOG]   Navegando a modal de contacto: https://www.linkedin.com/in/amoretof/overlay/contact-info/
+[2026-02-18T07:16:28.973Z] [LOG]   Modal de contacto encontrado
+[2026-02-18T07:16:28.977Z] [LOG]   Información de contacto extraída: email=N/A, teléfono=N/A, sitio=N/A
+[2026-02-18T07:16:32.550Z] [LOG]   Nombre del perfil extraído: Antonio Moreto
+[2026-02-18T07:16:32.550Z] [LOG]   Obteniendo experiencia desde: https://www.linkedin.com/in/amoretof/details/experience/
+[2026-02-18T07:16:40.564Z] [LOG]   Experiencia extraída desde details/experience: 4 entradas
+[2026-02-18T07:16:44.161Z] [LOG]   Experiencia laboral tomada de /details/experience/: 4 entradas
+[2026-02-18T07:16:44.161Z] [LOG] 
+✓ Se encontraron 5 perfiles:
+
+[2026-02-18T07:16:44.161Z] [LOG] 
+--- Perfil 1 ---
+[2026-02-18T07:16:44.161Z] [LOG] Nombre: Jorge Valdivia
+[2026-02-18T07:16:44.161Z] [LOG] Título: N/A
+[2026-02-18T07:16:44.161Z] [LOG] Ubicación: N/A
+[2026-02-18T07:16:44.162Z] [LOG] URL: https://www.linkedin.com/in/jorge-valdivia-75a3968/
+[2026-02-18T07:16:44.162Z] [LOG] ✓ Detalles completos obtenidos
+[2026-02-18T07:16:44.162Z] [LOG] 
+--- Perfil 2 ---
+[2026-02-18T07:16:44.162Z] [LOG] Nombre: Miguel Angel Sam Marcos
+[2026-02-18T07:16:44.162Z] [LOG] Título: N/A
+[2026-02-18T07:16:44.162Z] [LOG] Ubicación: N/A
+[2026-02-18T07:16:44.162Z] [LOG] URL: https://www.linkedin.com/in/miguelsam/
+[2026-02-18T07:16:44.162Z] [LOG] ✓ Detalles completos obtenidos
+[2026-02-18T07:16:44.162Z] [LOG] 
+--- Perfil 3 ---
+[2026-02-18T07:16:44.162Z] [LOG] Nombre: Juan Gualberto Aragón Gibaja
+[2026-02-18T07:16:44.162Z] [LOG] Título: N/A
+[2026-02-18T07:16:44.162Z] [LOG] Ubicación: N/A
+[2026-02-18T07:16:44.162Z] [LOG] URL: https://www.linkedin.com/in/juan-gualberto-arag%C3%B3n-gibaja-25126425/
+[2026-02-18T07:16:44.162Z] [LOG] ✓ Detalles completos obtenidos
+[2026-02-18T07:16:44.162Z] [LOG] 
+--- Perfil 4 ---
+[2026-02-18T07:16:44.162Z] [LOG] Nombre: Jose Yupan
+[2026-02-18T07:16:44.162Z] [LOG] Título: N/A
+[2026-02-18T07:16:44.162Z] [LOG] Ubicación: N/A
+[2026-02-18T07:16:44.162Z] [LOG] URL: https://www.linkedin.com/in/jose-yupan-4b86a831/
+[2026-02-18T07:16:44.162Z] [LOG] ✓ Detalles completos obtenidos
+[2026-02-18T07:16:44.162Z] [LOG] 
+--- Perfil 5 ---
+[2026-02-18T07:16:44.162Z] [LOG] Nombre: Antonio Moreto
+[2026-02-18T07:16:44.162Z] [LOG] Título: N/A
+[2026-02-18T07:16:44.162Z] [LOG] Ubicación: N/A
+[2026-02-18T07:16:44.162Z] [LOG] URL: https://www.linkedin.com/in/amoretof/
+[2026-02-18T07:16:44.162Z] [LOG] ✓ Detalles completos obtenidos
+[2026-02-18T07:16:44.164Z] [LOG] 
+✓ Resultados guardados en: resultados_Gerente_de_Tecnología_e_Innovación_1771399004162.json
+[2026-02-18T07:16:44.164Z] [LOG] 
+Cerrando navegador en 5 segundos...
+[2026-02-18T07:16:49.176Z] [LOG] ✓ Cookies guardadas
+[2026-02-18T07:16:49.544Z] [LOG] Navegador cerrado
+[2026-02-18T07:16:49.544Z] EJECUCIÓN FINALIZADA
+
+============================================================
+[2026-02-18T08:02:41.901Z] EJECUCIÓN INICIADA - process.argv: C:\Users\pc\Documents\pruebaSccraping\index.js Director Financiero (CFO) --keywords=director financiero (cfo),director,financiero,cfo,mba,finanzas,diseñar,ejecutar,estrategia,lima, perú --max=3 --delay=2
+============================================================
+[2026-02-18T08:02:41.901Z] [LOG] Iniciando navegador...
+[2026-02-18T08:02:43.034Z] [LOG] ✓ Cookies cargadas desde sesión anterior
+[2026-02-18T08:02:43.034Z] [LOG] Verificando sesión activa...
+[2026-02-18T08:02:50.942Z] [LOG] ✓ Sesión activa encontrada. Continuando sin login...
+[2026-02-18T08:02:50.942Z] [LOG] [DEBUG] --max detectado: 3 perfiles máximo
+[2026-02-18T08:02:50.942Z] [LOG] [DEBUG] process.argv: ["C:\\nvm4w\\nodejs\\node.exe","C:\\Users\\pc\\Documents\\pruebaSccraping\\index.js","Director Financiero (CFO)","--keywords=director financiero (cfo),director,financiero,cfo,mba,finanzas,diseñar,ejecutar,estrategia,lima, perú","--max=3","--delay=2"]
+[2026-02-18T08:02:50.942Z] [LOG] 
+=== Buscando: Director Financiero (CFO) ===
+
+[2026-02-18T08:02:50.942Z] [LOG] Palabras clave para priorizar barrido: director financiero (cfo), director, financiero, cfo, mba, finanzas, diseñar, ejecutar, estrategia, lima, perú
+
+[2026-02-18T08:02:50.943Z] [LOG] Buscando: Director Financiero (CFO)...
+[2026-02-18T08:02:50.943Z] [LOG] Palabras clave para priorizar barrido: director financiero (cfo), director, financiero, cfo, mba, finanzas, diseñar, ejecutar, estrategia, lima, perú
+[2026-02-18T08:02:50.943Z] [LOG] Query enviada a LinkedIn: Director Financiero (CFO) director financiero (cfo) director financiero cfo mba
+[2026-02-18T08:02:52.766Z] [LOG] URL actual: https://www.linkedin.com/search/results/people/?keywords=Director%20Financiero%20(CFO)%20director%20financiero%20(cfo)%20director%20financiero%20cfo%20mba&origin=SWITCH_SEARCH_VERTICAL&geoUrn=%5B%22102927786%22%5D
+[2026-02-18T08:02:52.766Z] [LOG] Esperando a que carguen los resultados...
+[2026-02-18T08:02:52.913Z] [LOG] ✓ Contenedor de resultados encontrado
+[2026-02-18T08:02:56.915Z] [LOG] Haciendo scroll para cargar más resultados...
+[2026-02-18T08:03:02.935Z] [LOG] Extrayendo información de perfiles (página 1)...
+[2026-02-18T08:03:02.937Z] [LOG] Perfiles encontrados en página 1: 10
+[2026-02-18T08:03:04.950Z] [LOG] Paginador: 1 hoja(s) detectada(s).
+[2026-02-18T08:03:04.950Z] [LOG] Perfiles encontrados después de extracción (todas las hojas): 10
+[2026-02-18T08:03:04.951Z] [LOG] [DEBUG searchPerson] maxResults=3, filteredProfiles.length=10
+[2026-02-18T08:03:04.951Z] [LOG] [DEBUG searchPerson] Aplicando límite: de 10 a 3
+[2026-02-18T08:03:04.951Z] [LOG]   Obteniendo detalles completos de 3 perfiles...
+[2026-02-18T08:03:04.951Z] [LOG]     [1/3] Luis Chipoco
+[2026-02-18T08:03:04.952Z] [LOG] Obteniendo detalles del perfil: https://www.linkedin.com/in/luis-chipoco-0852a136/
+[2026-02-18T08:03:09.829Z] [LOG]   URL del perfil: https://www.linkedin.com/in/luis-chipoco-0852a136/
+[2026-02-18T08:03:09.829Z] [LOG]   Cargando contenido completo del perfil...
+[2026-02-18T08:03:13.739Z] [LOG]   Expandiendo secciones "Ver más"...
+[2026-02-18T08:03:13.745Z] [LOG]   Sección de experiencia encontrada, expandiendo...
+[2026-02-18T08:03:20.774Z] [LOG]   Haciendo scroll dentro de la sección de experiencia...
+[2026-02-18T08:03:28.295Z] [LOG]   Buscando botón "Mostrar todas las experiencias"...
+[2026-02-18T08:03:28.296Z] [LOG]   Encontrado botón "Mostrar todas las experiencias", navegando a: https://www.linkedin.com/in/luis-chipoco-0852a136/details/experience?profileUrn=urn%3Ali%3Afsd_profile%3AACoAAAeEaSUBh_W6yzQlE4m78WH9FSLcgqOHBSc
+[2026-02-18T08:03:35.971Z] [LOG]   Expandidas 0 descripciones
+[2026-02-18T08:03:39.986Z] [LOG]   Intentando obtener información de contacto...
+[2026-02-18T08:03:39.986Z] [LOG]   Navegando a modal de contacto: https://www.linkedin.com/in/luis-chipoco-0852a136/overlay/contact-info/
+[2026-02-18T08:03:44.101Z] [LOG]   Modal de contacto encontrado
+[2026-02-18T08:03:44.104Z] [LOG]   Información de contacto extraída: email=luarchip11@hotmail.com, teléfono=N/A, sitio=https://lnkd.in/dMjCUKcb
+[2026-02-18T08:03:47.134Z] [LOG]   Nombre del perfil extraído: Luis Chipoco
+[2026-02-18T08:03:47.134Z] [LOG]   Obteniendo experiencia desde: https://www.linkedin.com/in/luis-chipoco-0852a136/details/experience/
+[2026-02-18T08:03:54.646Z] [LOG]   Experiencia extraída desde details/experience: 8 entradas
+[2026-02-18T08:03:57.703Z] [LOG]   Experiencia laboral tomada de /details/experience/: 8 entradas
+[2026-02-18T08:03:59.714Z] [LOG]     [2/3] Tony Pinedo
+[2026-02-18T08:03:59.714Z] [LOG] Obteniendo detalles del perfil: https://www.linkedin.com/in/tony-pinedo-revilla/
+[2026-02-18T08:04:03.809Z] [LOG]   URL del perfil: https://www.linkedin.com/in/tony-pinedo-revilla/
+[2026-02-18T08:04:03.809Z] [LOG]   Cargando contenido completo del perfil...
+[2026-02-18T08:04:07.718Z] [LOG]   Expandiendo secciones "Ver más"...
+[2026-02-18T08:04:07.727Z] [LOG]   Sección de experiencia encontrada, expandiendo...
+[2026-02-18T08:04:14.755Z] [LOG]   Haciendo scroll dentro de la sección de experiencia...
+[2026-02-18T08:04:22.271Z] [LOG]   Buscando botón "Mostrar todas las experiencias"...
+[2026-02-18T08:04:22.273Z] [LOG]   Encontrado botón "Mostrar todas las experiencias", navegando a: https://www.linkedin.com/in/tony-pinedo-revilla/details/experience?profileUrn=urn%3Ali%3Afsd_profile%3AACoAAAXCEwMBTjYcQsMi6PbGHu3NdJMHQfYuiMQ
+[2026-02-18T08:04:36.419Z] [LOG]   Expandidas 0 descripciones
+[2026-02-18T08:04:40.423Z] [LOG]   Intentando obtener información de contacto...
+[2026-02-18T08:04:40.424Z] [LOG]   Navegando a modal de contacto: https://www.linkedin.com/in/tony-pinedo-revilla/overlay/contact-info/
+[2026-02-18T08:04:44.542Z] [LOG]   Modal de contacto encontrado
+[2026-02-18T08:04:44.544Z] [LOG]   Información de contacto extraída: email=tony.pinedo@gmail.com, teléfono=N/A, sitio=https://bit.ly/44J4T63
+[2026-02-18T08:04:47.735Z] [LOG]   Nombre del perfil extraído: Tony Pinedo
+[2026-02-18T08:04:47.736Z] [LOG]   Obteniendo experiencia desde: https://www.linkedin.com/in/tony-pinedo-revilla/details/experience/
+[2026-02-18T08:04:55.477Z] [LOG]   Experiencia extraída desde details/experience: 11 entradas
+[2026-02-18T08:04:58.730Z] [LOG]   Experiencia laboral tomada de /details/experience/: 11 entradas
+[2026-02-18T08:05:00.744Z] [LOG]     [3/3] Juan Martín Valdivia
+[2026-02-18T08:05:00.744Z] [LOG] Obteniendo detalles del perfil: https://www.linkedin.com/in/juanmartinv/
+[2026-02-18T08:05:05.051Z] [LOG]   URL del perfil: https://www.linkedin.com/in/juanmartinv/
+[2026-02-18T08:05:05.051Z] [LOG]   Cargando contenido completo del perfil...
+[2026-02-18T08:05:08.962Z] [LOG]   Expandiendo secciones "Ver más"...
+[2026-02-18T08:05:08.972Z] [LOG]   Sección de experiencia encontrada, expandiendo...
+[2026-02-18T08:05:15.986Z] [LOG]   Haciendo scroll dentro de la sección de experiencia...
+[2026-02-18T08:05:23.515Z] [LOG]   Buscando botón "Mostrar todas las experiencias"...
+[2026-02-18T08:05:23.516Z] [LOG]   Encontrado botón "Mostrar todas las experiencias", navegando a: https://www.linkedin.com/in/juanmartinv/details/experience?profileUrn=urn%3Ali%3Afsd_profile%3AACoAAANc-_sB8vVD-RCUfZmWyAmaQCTiIzdRVZg
+[2026-02-18T08:05:30.737Z] [LOG]   Expandidas 0 descripciones
+[2026-02-18T08:05:34.737Z] [LOG]   Intentando obtener información de contacto...
+[2026-02-18T08:05:34.737Z] [LOG]   Navegando a modal de contacto: https://www.linkedin.com/in/juanmartinv/overlay/contact-info/
+[2026-02-18T08:05:39.041Z] [LOG]   Modal de contacto encontrado
+[2026-02-18T08:05:39.044Z] [LOG]   Información de contacto extraída: email=N/A, teléfono=N/A, sitio=https://reut.rs/4bsr2vm
+[2026-02-18T08:05:42.912Z] [LOG]   Nombre del perfil extraído: Juan Martín Valdivia
+[2026-02-18T08:05:42.912Z] [LOG]   Obteniendo experiencia desde: https://www.linkedin.com/in/juanmartinv/details/experience/
+[2026-02-18T08:05:50.901Z] [LOG]   Experiencia extraída desde details/experience: 12 entradas
+[2026-02-18T08:05:54.036Z] [LOG]   Experiencia laboral tomada de /details/experience/: 12 entradas
+[2026-02-18T08:05:54.036Z] [LOG] 
+✓ Se encontraron 3 perfiles:
+
+[2026-02-18T08:05:54.036Z] [LOG] 
+--- Perfil 1 ---
+[2026-02-18T08:05:54.036Z] [LOG] Nombre: Luis Chipoco
+[2026-02-18T08:05:54.036Z] [LOG] Título: N/A
+[2026-02-18T08:05:54.036Z] [LOG] Ubicación: N/A
+[2026-02-18T08:05:54.036Z] [LOG] URL: https://www.linkedin.com/in/luis-chipoco-0852a136/
+[2026-02-18T08:05:54.036Z] [LOG] ✓ Detalles completos obtenidos
+[2026-02-18T08:05:54.036Z] [LOG] 
+--- Perfil 2 ---
+[2026-02-18T08:05:54.036Z] [LOG] Nombre: Tony Pinedo
+[2026-02-18T08:05:54.036Z] [LOG] Título: N/A
+[2026-02-18T08:05:54.036Z] [LOG] Ubicación: N/A
+[2026-02-18T08:05:54.036Z] [LOG] URL: https://www.linkedin.com/in/tony-pinedo-revilla/
+[2026-02-18T08:05:54.036Z] [LOG] ✓ Detalles completos obtenidos
+[2026-02-18T08:05:54.037Z] [LOG] 
+--- Perfil 3 ---
+[2026-02-18T08:05:54.037Z] [LOG] Nombre: Juan Martín Valdivia
+[2026-02-18T08:05:54.037Z] [LOG] Título: N/A
+[2026-02-18T08:05:54.037Z] [LOG] Ubicación: N/A
+[2026-02-18T08:05:54.037Z] [LOG] URL: https://www.linkedin.com/in/juanmartinv/
+[2026-02-18T08:05:54.037Z] [LOG] ✓ Detalles completos obtenidos
+[2026-02-18T08:05:54.038Z] [LOG] 
+✓ Resultados guardados en: resultados_Director_Financiero_(CFO)_1771401954037.json
+[2026-02-18T08:05:54.038Z] [LOG] 
+Cerrando navegador en 5 segundos...
+[2026-02-18T08:05:59.045Z] [LOG] ✓ Cookies guardadas
+[2026-02-18T08:05:59.350Z] [LOG] Navegador cerrado
+[2026-02-18T08:05:59.350Z] EJECUCIÓN FINALIZADA
