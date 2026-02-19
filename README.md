@@ -27,11 +27,40 @@ node --version
 npm install
 ```
 
-3. Crea un archivo `.env` en la raíz del proyecto con tus credenciales de LinkedIn:
+3. Crea un archivo `.env` en la raíz del proyecto con tus credenciales de LinkedIn (y opcionalmente ventana del navegador):
 ```
 LINKEDIN_EMAIL=tu_email@ejemplo.com
 LINKEDIN_PASSWORD=tu_contraseña
+
+# Opcional: ver el navegador (sin esto, por defecto va sin ventana / headless)
+# HEADLESS=0
+# o: SHOW_BROWSER=1
 ```
+
+### Con o sin ventana del navegador (dinámico)
+
+Puedes elegir en cada ejecución si quieres ver el navegador o no:
+
+- **Por comando (recomendado)**  
+  - `--headless` → sin ventana (para servidor).  
+  - `--no-headless` o `--browser` → con ventana visible.  
+  Ejemplos: `node index.js "Juan" --headless` | `node index.js "Juan" --browser`
+- **Por .env** (útil para no pasar argumentos en cada ejecución):  
+  - **Con ventana visible**: `HEADLESS=0` o `HEADLESS=false`, o bien `SHOW_BROWSER=1` o `BROWSER_VISIBLE=1`.  
+  - **Sin ventana (headless, servidor)**: `HEADLESS=1` o `HEADLESS=true`, o no definir nada (por defecto es headless).  
+  La línea de comandos (`--headless` / `--no-headless` / `--browser`) tiene prioridad sobre `.env`.
+
+### Ejecución en servidor Linux (sin pantalla)
+
+Por defecto el script usa **modo headless** (sin ventana del navegador), adecuado para servidores Linux. En servidor puedes usar `--headless` explícitamente o dejar el valor por defecto.
+- **2FA (código dinámico)**: El código cambia en cada intento de sesión. En servidor puedes usar:
+  - **Por consola**: Si no configuras archivo, comando ni código en .env, el script te pedirá **Introduce el código 2FA (y pulsa Enter)** en la misma terminal. Así puedes escribir el código cuando llegue el SMS sin depender del archivo.
+  - **Archivo (recomendado para automatizar)**: `LINKEDIN_2FA_CODE_FILE=/ruta/codigo.txt`. Cuando LinkedIn pida el código, el script espera hasta 2 min leyendo ese archivo cada 5 s. Escribe el código en el archivo cuando recibas el SMS (p. ej. `echo 123456 > /ruta/codigo.txt`); el script lo usará y borrará el contenido. Opcional: `LINKEDIN_2FA_FILE_WAIT=120000`, `LINKEDIN_2FA_FILE_POLL=5000`.
+  - **Comando**: `LINKEDIN_2FA_CMD="ruta/script.sh"`. El script debe imprimir el código por stdout (máx. 60 s). Útil si obtienes el código por API o otro proceso.
+  - **Estático (solo para una ejecución)**: `LINKEDIN_2FA_CODE=123456`. Si cierras y vuelves a abrir, LinkedIn enviará otro código; tendrías que actualizar .env y reiniciar.
+- **CAPTCHA ("No soy un robot")**: En headless no se puede resolver. Haz login una vez en un PC, deja que el script guarde `linkedin_cookies.json`, súbelo al servidor y úsalo en la siguiente ejecución para no tener que hacer login de nuevo.
+- **Capturas de depuración**: Si en `.env` pones `DEBUG_SCREENSHOTS=1`, el script guarda capturas de pantalla en la carpeta `screenshots/` en momentos clave del login (checkpoint, app/SMS, 2FA, CAPTCHA, bloqueos). Sirve para ver en qué pantalla se quedó el navegador cuando algo falla.
+- **Chrome/Chromium**: En el servidor necesitas Chromium (p. ej. `apt install chromium-browser` o usar el que instala Puppeteer).
 
 ## Uso
 

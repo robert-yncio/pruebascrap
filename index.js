@@ -5,8 +5,76 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync } from 'fs';
 import { format } from 'util';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import readline from 'readline';
 
 dotenv.config();
+
+const execAsync = promisify(exec);
+
+/** Obtiene el código 2FA de forma dinámica: comando externo, archivo (polling) o .env estático. */
+async function getTwoFactorCode() {
+  const cmd = process.env.LINKEDIN_2FA_CMD || process.env.LINKEDIN_2FA_COMMAND;
+  const filePath = process.env.LINKEDIN_2FA_CODE_FILE || process.env.LINKEDIN_2FA_FILE;
+  const staticCode = (process.env.LINKEDIN_2FA_CODE || process.env.LINKEDIN_VERIFICATION_CODE || '').trim();
+
+  if (cmd && typeof cmd === 'string' && cmd.trim()) {
+    try {
+      const { stdout } = await execAsync(cmd.trim(), { timeout: 60000, maxBuffer: 1024 });
+      const code = (stdout || '').split('\n')[0].trim().replace(/\D/g, '') || (stdout || '').trim();
+      if (code.length >= 4) return code;
+    } catch (e) {
+      console.log('Error ejecutando LINKEDIN_2FA_CMD:', e.message);
+      return null;
+    }
+  }
+
+  if (filePath && typeof filePath === 'string' && filePath.trim()) {
+    const path = filePath.trim();
+    const maxWaitMs = parseInt(process.env.LINKEDIN_2FA_FILE_WAIT, 10) || 120000;
+    const pollIntervalMs = parseInt(process.env.LINKEDIN_2FA_FILE_POLL, 10) || 5000;
+    const start = Date.now();
+    console.log(`Esperando código 2FA en archivo ${path} (máx. ${maxWaitMs / 1000}s, polling cada ${pollIntervalMs / 1000}s)...`);
+    let lastLog = 0;
+    while (Date.now() - start < maxWaitMs) {
+      try {
+        if (existsSync(path)) {
+          const content = fs.readFileSync(path, 'utf-8').trim();
+          const code = content.replace(/\D/g, '') || content;
+          if (code.length >= 4) {
+            fs.writeFileSync(path, '', 'utf-8');
+            return code;
+          }
+        }
+      } catch (e) {}
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+      const elapsed = Date.now() - start;
+      if (elapsed - lastLog >= 15000) {
+        lastLog = elapsed;
+        console.log(`   Esperando código... (${Math.ceil((maxWaitMs - elapsed) / 1000)}s restantes)`);
+      }
+    }
+    console.log('Tiempo agotado esperando código en archivo.');
+    return null;
+  }
+
+  if (staticCode.length >= 4) return staticCode;
+
+  // Si la consola es interactiva (TTY), pedir el código por teclado
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    return new Promise((resolve) => {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      rl.question('Introduce el código 2FA (y pulsa Enter): ', (answer) => {
+        rl.close();
+        const code = (answer || '').trim().replace(/\D/g, '') || (answer || '').trim();
+        resolve(code.length >= 4 ? code : null);
+      });
+    });
+  }
+
+  return null;
+}
 
 // Historial de consola en history.log (cada ejecución se añade al archivo)
 let historyLogStream = null;
@@ -33,17 +101,21 @@ function setupHistoryLog() {
       } catch (e) {}
     }
 
+    function timestamp() {
+      return new Date().toISOString();
+    }
+
     console.log = function (...args) {
       writeToHistory('LOG', args);
-      originalLog.apply(console, args);
+      originalLog.apply(console, args.length ? [`[${timestamp()}]`, ...args] : [`[${timestamp()}]`]);
     };
     console.error = function (...args) {
       writeToHistory('ERROR', args);
-      originalError.apply(console, args);
+      originalError.apply(console, args.length ? [`[${timestamp()}]`, ...args] : [`[${timestamp()}]`]);
     };
     console.warn = function (...args) {
       writeToHistory('WARN', args);
-      originalWarn.apply(console, args);
+      originalWarn.apply(console, args.length ? [`[${timestamp()}]`, ...args] : [`[${timestamp()}]`]);
     };
 
     originalLog(`Historial de esta ejecución se guarda en: ${logPath}`);
@@ -57,24 +129,57 @@ class LinkedInScraper {
     this.browser = null;
     this.page = null;
     this.cookiesFile = 'linkedin_cookies.json';
+    this.headless = true; // por defecto para servidor; init() lo actualiza según HEADLESS env
   }
 
-  async init() {
-    console.log('Iniciando navegador...');
+  async init(options = {}) {
+    // Prioridad: opción pasada a init() > argumentos CLI (--headless / --no-headless / --browser) > .env (HEADLESS / SHOW_BROWSER)
+    let isHeadless = options.headless;
+    if (isHeadless === undefined) {
+      const hasNoHeadless = process.argv.includes('--no-headless') || process.argv.includes('--browser') || process.argv.includes('--with-browser');
+      const hasHeadless = process.argv.includes('--headless');
+      if (hasNoHeadless) isHeadless = false;
+      else if (hasHeadless) isHeadless = true;
+      else {
+        // Desde .env: SHOW_BROWSER=1 o BROWSER_VISIBLE=1 → con ventana; HEADLESS=0 o false → con ventana; resto → headless
+        const showBrowser = /^(1|true|yes)$/i.test((process.env.SHOW_BROWSER || process.env.BROWSER_VISIBLE || '').trim());
+        const headlessEnv = (process.env.HEADLESS || '').trim().toLowerCase();
+        if (showBrowser || headlessEnv === 'false' || headlessEnv === '0' || headlessEnv === 'no') isHeadless = false;
+        else isHeadless = true;
+      }
+    }
+    if (isHeadless) {
+      console.log('Iniciando navegador en modo headless (sin pantalla, para servidor Linux)...');
+    } else {
+      console.log('Iniciando navegador con interfaz...');
+    }
+    const args = isHeadless
+      ? [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--no-first-run',
+          '--window-size=1920,1080'
+        ]
+      : ['--start-maximized'];
     this.browser = await puppeteer.launch({
-      headless: false, // Cambiar a true para modo sin interfaz gráfica
-      defaultViewport: null,
-      args: ['--start-maximized']
+      headless: isHeadless ? 'new' : false,
+      defaultViewport: isHeadless ? { width: 1920, height: 1080 } : null,
+      args
     });
     this.page = await this.browser.newPage();
-    
-    // Configurar user agent para parecer más humano
-    await this.page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    );
-    
+    this.headless = isHeadless;
+
+    // Configurar user agent para parecer más humano (Linux cuando headless)
+    const userAgent = isHeadless
+      ? 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    await this.page.setUserAgent(userAgent);
+
     // Cargar cookies guardadas si existen
-    await this.loadCookies();
+   // await this.loadCookies();
   }
 
   // Guardar cookies de la sesión
@@ -108,6 +213,26 @@ class LinkedInScraper {
         // Solo mostrar errores que no sean relacionados con el cierre del navegador
         console.log('⚠ No se pudieron guardar las cookies (navegador cerrando)');
       }
+    }
+  }
+
+  /**
+   * Guarda una captura de pantalla en carpeta interna para depuración (saber en qué pantalla está el browser).
+   * Solo actúa si DEBUG_SCREENSHOTS=1 o true en .env. Las imágenes se guardan en ./screenshots/
+   */
+  async takeDebugScreenshot(stepName) {
+    const enabled = /^(1|true|yes)$/i.test((process.env.DEBUG_SCREENSHOTS || '').trim());
+    if (!enabled || !this.page || this.page.isClosed()) return;
+    try {
+      const dir = join(process.cwd(), 'screenshots');
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const safe = (stepName || 'screen').replace(/[^\w\-]/g, '_');
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const path = join(dir, `${safe}_${ts}.png`);
+      await this.page.screenshot({ path, type: 'png' });
+      console.log(`[DEBUG] Captura guardada: ${path}`);
+    } catch (e) {
+      // No fallar el flujo por un error al guardar la captura
     }
   }
 
@@ -195,40 +320,204 @@ class LinkedInScraper {
       
       console.log('Esperando respuesta del servidor...');
       
-      // Esperar a que la navegación se complete o detectar cambios en la URL
+      // En headless la navegación a veces no dispara eventos; limitar espera y luego comprobar URL
+      const navTimeoutMs = this.headless ? 25000 : 60000;
+      const minWaitMs = this.headless ? 8000 : 3000;
       try {
         await Promise.race([
-          this.page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }),
-          this.page.waitForSelector('input[aria-label*="Buscar"]', { timeout: 60000 }),
-          this.page.waitForSelector('nav[role="navigation"]', { timeout: 60000 })
+          this.page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: navTimeoutMs }),
+          this.page.waitForSelector('input[aria-label*="Buscar"]', { timeout: navTimeoutMs }),
+          this.page.waitForSelector('nav[role="navigation"]', { timeout: navTimeoutMs }),
+          new Promise(resolve => setTimeout(resolve, navTimeoutMs))
         ]);
       } catch (navError) {
-        // Si hay timeout, verificar si ya estamos logueados
         console.log('Timeout en navegación, verificando estado...');
       }
-      
-      await this.page.waitForTimeout(3000);
-      
-      // Verificar si el login fue exitoso
-      const currentUrl = this.page.url();
+      await this.page.waitForTimeout(minWaitMs);
+
+      // Verificar si el login fue exitoso (LinkedIn a veces redirige a /checkpoint/challenge con retraso)
+      let currentUrl = this.page.url();
       console.log(`URL actual: ${currentUrl}`);
+      if (!currentUrl.includes('/checkpoint/') && !currentUrl.includes('/feed') && !currentUrl.includes('mynetwork')) {
+        await this.page.waitForTimeout(2000);
+        currentUrl = this.page.url();
+        console.log(`URL tras espera (por redirección tardía): ${currentUrl}`);
+      }
       
-      // LinkedIn puede redirigir a verificación de seguridad (checkpoint) - NO es login exitoso
-      const isCheckpoint = currentUrl.includes('/checkpoint/');
+      // LinkedIn puede redirigir a verificación de seguridad (checkpoint) o "No soy un robot" (reCAPTCHA)
+      let isCheckpoint = currentUrl.includes('/checkpoint/');
+      const isCheckpointChallenge = currentUrl.includes('/checkpoint/challenge');
       const pageTitle = await this.page.title().catch(() => '');
       const isSecurityVerification = pageTitle.includes('Verificación de seguridad');
-      
-      if (isCheckpoint || isSecurityVerification) {
-        console.log('⚠ LinkedIn está solicitando verificación de seguridad (p. ej. escaneo o comprobación).');
-        console.log('Complétala en el navegador. Comprobando cada 15 s hasta 5 minutos...');
-        const maxWaitMs = 5 * 60 * 1000;   // 5 minutos
+
+      // Si estamos en checkpoint/challenge, dar tiempo a que cargue el contenido (2FA, app o reCAPTCHA)
+      if (isCheckpointChallenge) {
+        await this.page.waitForTimeout(2500);
+        currentUrl = this.page.url();
+        if (currentUrl.includes('/checkpoint/')) isCheckpoint = true;
+        await this.takeDebugScreenshot('checkpoint');
+      }
+
+      // Detectar pantalla "Echa un vistazo a la aplicación de LinkedIn" (confirmar por app) y hacer clic en "Verificar por SMS"
+      let clickedVerifyBySms = false;
+      try {
+        const isAppNotificationScreen = await this.page.evaluate(() => {
+          const bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
+          const t = bodyText.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          const hasAppTitle = t.includes('echa un vistazo') && t.includes('aplicacion');
+          const hasNotification = t.includes('notificacion') && (t.includes('dispositivos') || t.includes('sesion'));
+          const hasVerifySms = t.includes('verificar por sms') || t.includes('verify by sms');
+          return (hasAppTitle || hasNotification) && (hasVerifySms || t.includes('volver a enviar'));
+        });
+        if (isAppNotificationScreen) {
+          await this.takeDebugScreenshot('app_notification');
+          console.log('⚠ LinkedIn pide confirmar por la app. Haciendo clic en "Verificar por SMS" para recibir el código...');
+          clickedVerifyBySms = await this.page.evaluate(() => {
+            const candidates = document.querySelectorAll('a, button, [role="button"], [role="link"], span[class*="link"]');
+            for (const el of candidates) {
+              const text = (el.innerText || el.textContent || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+              if (text === 'verificar por sms' || text === 'verify by sms' || (text.includes('verificar por sms') && text.length < 25) || (text.includes('verify by sms') && text.length < 25)) {
+                el.click();
+                return true;
+              }
+            }
+            for (const el of candidates) {
+              const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+              if (text.includes('sms') && (text.includes('verificar') || text.includes('verify')) && text.length < 35) {
+                el.click();
+                return true;
+              }
+            }
+            return false;
+          });
+          if (clickedVerifyBySms) {
+            await this.page.waitForTimeout(4000);
+            currentUrl = this.page.url();
+            console.log('Esperando pantalla de código SMS...');
+          }
+        }
+      } catch (e) {}
+
+      // Detectar pantalla de código 2FA (código enviado al teléfono) por texto Y por elementos del formulario
+      let isTwoFactorCodeStep = false;
+      try {
+        isTwoFactorCodeStep = await this.page.evaluate(() => {
+          const bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
+          const t = bodyText.toLowerCase().normalize('NFD').replace(/\u0307/g, '').replace(/[\u0300-\u036f]/g, '');
+          const hasCodeText = t.includes('introduce el codigo') || t.includes('codigo que te hemos enviado') || t.includes('telefono acabado en') || t.includes('code we sent') || t.includes('verification code') || t.includes('codigo de verificacion');
+          const hasDeviceText = t.includes('reconocer este dispositivo') || t.includes('recognize this device');
+          const hasResendText = t.includes('reenviar por sms') || t.includes('reenviar por llamada') || t.includes('resend');
+          const hasEnviarButton = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).some(el => (el.innerText || el.value || '').toLowerCase().includes('enviar') || (el.innerText || el.value || '').toLowerCase().includes('submit'));
+          const codeInput = document.querySelector('input[type="text"]:not([type="hidden"]), input[type="number"], input:not([type="hidden"]):not([type="submit"])');
+          const hasCodeInput = codeInput && (document.body.contains(codeInput));
+          return (hasCodeText || (hasDeviceText && hasResendText)) || (hasEnviarButton && hasCodeInput);
+        });
+      } catch (e) {}
+
+      if (isTwoFactorCodeStep) await this.takeDebugScreenshot('2fa_code');
+
+      // Detectar pantalla "No soy un robot" (reCAPTCHA) - solo si no es 2FA
+      let isRecaptchaSecurityStep = false;
+      if (!isTwoFactorCodeStep) {
+        try {
+          isRecaptchaSecurityStep = await this.page.evaluate(() => {
+            const bodyText = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : '';
+            const hasRobotText = bodyText.includes('no soy un robot') || bodyText.includes("i'm not a robot");
+            const hasSecurityCheckText = bodyText.includes('comprobación rápida de seguridad') || bodyText.includes('vamos a hacer una comprobación');
+            const hasRecaptchaIframe = document.querySelector('iframe[src*="recaptcha"]') !== null || document.querySelector('iframe[src*="google.com/recaptcha"]') !== null;
+            return (hasRobotText || hasSecurityCheckText) || hasRecaptchaIframe;
+          });
+        } catch (e) {}
+      }
+
+      if (isRecaptchaSecurityStep) await this.takeDebugScreenshot('recaptcha');
+
+      const isCaptchaOrChallengeStep = isCheckpointChallenge || isRecaptchaSecurityStep;
+
+      const isHeadless = this.headless === true;
+
+      if (isCheckpoint || isSecurityVerification || isRecaptchaSecurityStep) {
+        if (isTwoFactorCodeStep) {
+          console.log('⚠ LinkedIn solicita el código de verificación enviado a tu teléfono (2FA).');
+          const twoFactorCode = await getTwoFactorCode();
+          if (twoFactorCode && twoFactorCode.length >= 4) {
+            try {
+              const submitted = await this.page.evaluate((code) => {
+                const input = document.querySelector('input[type="text"]:not([type="hidden"]), input[type="number"], input[name*="pin"], input[name*="code"], input:not([type="hidden"]):not([type="submit"])');
+                const btn = Array.from(document.querySelectorAll('button, input[type="submit"]')).find(el => (el.innerText || el.value || '').toLowerCase().includes('enviar') || (el.innerText || el.value || '').toLowerCase().includes('submit'));
+                if (input && btn) {
+                  input.focus();
+                  input.value = String(code).trim();
+                  input.dispatchEvent(new Event('input', { bubbles: true }));
+                  btn.click();
+                  return true;
+                }
+                return false;
+              }, twoFactorCode.trim());
+              if (submitted) {
+                console.log('Código 2FA enviado. Esperando redirección...');
+                await this.page.waitForTimeout(5000);
+                const afterUrl = this.page.url();
+                if (!afterUrl.includes('/checkpoint/')) {
+                  console.log('✓ Verificación 2FA completada. Login exitoso.');
+                  await this.saveCookies();
+                  return true;
+                }
+                console.log('Código posiblemente incorrecto o sesión sigue en checkpoint.');
+              }
+            } catch (e) {
+              console.log('No se pudo enviar el código 2FA:', e.message);
+              if (isHeadless) {
+                console.log('✗ En servidor sin pantalla revisa LINKEDIN_2FA_CODE_FILE o LINKEDIN_2FA_CMD.');
+                return false;
+              }
+            }
+          }
+          if (isHeadless) {
+            await this.takeDebugScreenshot('login_blocked_2fa');
+            console.log('✗ En servidor sin pantalla necesitas código 2FA dinámico:');
+            console.log('  - LINKEDIN_2FA_CODE_FILE=ruta/archivo.txt  (escribe el código en el archivo al recibir el SMS; se lee y se borra)');
+            console.log('  - LINKEDIN_2FA_CMD="comando que imprime el código"  (ej. script que lee de API/SMS)');
+            console.log('  - LINKEDIN_2FA_CODE=123456  (solo para esta ejecución; cambia en cada intento)');
+            return false;
+          }
+          console.log('Introduce el código en el navegador (haz clic en el campo, escribe y pulsa Enviar). Comprobando cada 15 s hasta 5 minutos...');
+        } else if (isCaptchaOrChallengeStep) {
+          if (isHeadless) {
+            await this.takeDebugScreenshot('login_blocked_captcha');
+            console.log('✗ LinkedIn muestra CAPTCHA ("No soy un robot"). En servidor sin pantalla no se puede resolver.');
+            console.log('Solución: haz login una vez en un PC con navegador, guarda linkedin_cookies.json y súbelo al servidor; o usa una sesión con cookies válidas.');
+            return false;
+          }
+          console.log('⚠ LinkedIn muestra verificación "No soy un robot" / comprobación rápida de seguridad (CAPTCHA).');
+          console.log('Marca la casilla en el navegador y resuélvela. Comprobando cada 15 s hasta 5 minutos...');
+        } else {
+          if (isHeadless) {
+            await this.takeDebugScreenshot('login_blocked_verification');
+            console.log('✗ LinkedIn solicita verificación de seguridad. En servidor sin pantalla no se puede completar.');
+            return false;
+          }
+          console.log('⚠ LinkedIn está solicitando verificación de seguridad (p. ej. escaneo o comprobación).');
+          console.log('Complétala en el navegador. Comprobando cada 15 s hasta 5 minutos...');
+        }
+        const maxWaitMs = 5 * 60 * 1000;   // 5 minutos (solo con interfaz)
         const checkIntervalMs = 15 * 1000;  // 15 segundos
         const start = Date.now();
         while (Date.now() - start < maxWaitMs) {
           await this.page.waitForTimeout(checkIntervalMs);
           const newUrl = this.page.url();
           const newTitle = await this.page.title().catch(() => '');
-          if (!newUrl.includes('/checkpoint/') && !newTitle.includes('Verificación de seguridad')) {
+          let stillRecaptcha = false;
+          try {
+            stillRecaptcha = await this.page.evaluate(() => {
+              const bodyText = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : '';
+              const hasRobot = bodyText.includes('no soy un robot') || bodyText.includes("i'm not a robot");
+              const hasSecurity = bodyText.includes('comprobación rápida de seguridad') || bodyText.includes('vamos a hacer una comprobación');
+              const hasRecaptcha = document.querySelector('iframe[src*="recaptcha"]') !== null || document.querySelector('iframe[src*="google.com/recaptcha"]') !== null;
+              return (hasRobot || hasSecurity) || hasRecaptcha;
+            });
+          } catch (e) {}
+          if (!newUrl.includes('/checkpoint/') && !newTitle.includes('Verificación de seguridad') && !stillRecaptcha) {
             console.log('✓ Verificación completada. Login exitoso.');
             await this.saveCookies();
             return true;
@@ -256,26 +545,44 @@ class LinkedInScraper {
         await this.saveCookies();
         return true;
       } else {
-        // Verificar si hay CAPTCHA o desafío
+        // Verificar si hay CAPTCHA, "No soy un robot" o desafío
         const hasCaptcha = await this.page.$('iframe[title*="challenge"]') !== null ||
                           await this.page.$('div[class*="challenge"]') !== null;
-        
-        if (hasCaptcha) {
-          console.log('⚠ LinkedIn está solicitando verificación (CAPTCHA). Por favor, resuélvelo manualmente en el navegador.');
-          console.log('Esperando 30 segundos para que resuelvas el CAPTCHA...');
+        let hasRecaptchaRobot = false;
+        try {
+          hasRecaptchaRobot = await this.page.evaluate(() => {
+            const bodyText = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : '';
+            const hasRobot = bodyText.includes('no soy un robot') || bodyText.includes("i'm not a robot");
+            const hasSecurity = bodyText.includes('comprobación rápida de seguridad') || bodyText.includes('vamos a hacer una comprobación');
+            const hasRecaptcha = document.querySelector('iframe[src*="recaptcha"]') !== null;
+            return (hasRobot || hasSecurity) || hasRecaptcha;
+          });
+        } catch (e) {}
+
+        if (hasCaptcha || hasRecaptchaRobot) {
+          if (this.headless) {
+            console.log('✗ LinkedIn muestra CAPTCHA. En servidor sin pantalla no se puede resolver.');
+            console.log('Solución: haz login en un PC, guarda linkedin_cookies.json y úsalo en el servidor.');
+            return false;
+          }
+          if (hasRecaptchaRobot) {
+            console.log('⚠ LinkedIn muestra "No soy un robot" / comprobación rápida de seguridad. Resuélvelo en el navegador.');
+          } else {
+            console.log('⚠ LinkedIn está solicitando verificación (CAPTCHA). Por favor, resuélvelo manualmente en el navegador.');
+          }
+          console.log('Esperando 30 segundos para que resuelvas la verificación...');
           await this.page.waitForTimeout(30000);
-          
+
           // Verificar nuevamente después del delay
           const newUrl = this.page.url();
           if ((newUrl.includes('feed') || newUrl.includes('mynetwork') || !newUrl.includes('/login')) && !newUrl.includes('/checkpoint/')) {
             console.log('✓ Login exitoso después de la verificación');
-            // Guardar cookies después de login exitoso
             await this.saveCookies();
             return true;
           }
         }
-        
-        console.log('✗ Error en el login. Verifica tus credenciales o resuelve el CAPTCHA manualmente.');
+
+        console.log('✗ Error en el login. Verifica tus credenciales o resuelve el CAPTCHA / "No soy un robot" manualmente.');
         return false;
       }
     } catch (error) {
@@ -2954,6 +3261,9 @@ async function main() {
       console.log('    node index.js nombres.txt --delay=10 --max=15');
       console.log('');
       console.log('Opciones:');
+      console.log('  --headless              Usar navegador sin ventana (modo servidor). Por defecto si HEADLESS no es false en .env');
+      console.log('  --no-headless           Usar navegador con ventana visible (igual que --browser)');
+      console.log('  --browser               Alias de --no-headless (ver el navegador)');
       console.log('  --details, -d           Obtener detalles completos (por defecto: activado)');
       console.log('  --keywords=palabras     Filtrar por palabras clave (separadas por coma)');
       console.log('  --filter=palabras       Alias de --keywords');
@@ -2986,6 +3296,11 @@ async function main() {
       console.log('  # Búsqueda masiva con filtros y exclusiones');
       console.log('  node index.js nombres.json --keywords="marketing,digital" --max=20 --exclude-file="ya_contactados.json"');
       console.log('  node index.js candidatos.csv --exclude="linkedin.com/in/user1,linkedin.com/in/user2" --delay=3');
+      console.log('');
+      console.log('  # Con o sin ventana del navegador (dinámico por comando)');
+      console.log('  node index.js "Juan" --headless          # Sin ventana (servidor)');
+      console.log('  node index.js "Juan" --no-headless        # Con ventana visible');
+      console.log('  node index.js "Juan" --browser            # Igual que --no-headless');
       await scraper.close();
       return;
     }
