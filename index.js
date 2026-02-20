@@ -164,11 +164,18 @@ class LinkedInScraper {
           '--window-size=1920,1080'
         ]
       : ['--start-maximized'];
-    this.browser = await puppeteer.launch({
+    const launchOptions = {
       headless: isHeadless ? 'new' : false,
       defaultViewport: isHeadless ? { width: 1920, height: 1080 } : null,
       args
-    });
+    };
+    // Permite apuntar a un Chromium/Chrome del sistema vía CHROME_PATH o CHROMIUM_PATH en .env
+    const executablePath = process.env.CHROME_PATH || process.env.CHROMIUM_PATH;
+    if (executablePath) {
+      launchOptions.executablePath = executablePath;
+      console.log(`Usando Chrome/Chromium desde: ${executablePath}`);
+    }
+    this.browser = await puppeteer.launch(launchOptions);
     this.page = await this.browser.newPage();
     this.headless = isHeadless;
 
@@ -179,7 +186,7 @@ class LinkedInScraper {
     await this.page.setUserAgent(userAgent);
 
     // Cargar cookies guardadas si existen
-   // await this.loadCookies();
+   await this.loadCookies();
   }
 
   // Guardar cookies de la sesión
