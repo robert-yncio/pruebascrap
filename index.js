@@ -613,17 +613,13 @@ class LinkedInScraper {
         console.log(`Palabras clave para priorizar barrido: ${filterKeywords.join(', ')}`);
       }
       
-      // Construir query inicial: título + pocas palabras clave (LinkedIn suele devolver 0 si la query es muy larga)
+      // Construir query para LinkedIn: solo el título del puesto.
+      // Las keywords NO se añaden al URL porque suelen ser subconjuntos del título
+      // (ej. título="Jefe de proyectos", keywords=["jefe","proyectos",...]) lo que
+      // genera queries redundantes y muy restrictivas que devuelven 0-4 resultados.
+      // Las keywords se usan solo para priorizar/ordenar localmente los perfiles extraídos.
       const titleOnly = (name || '').trim();
       let searchQuery = titleOnly;
-      if (filterKeywords && filterKeywords.length > 0) {
-        const kw = filterKeywords.map(k => (typeof k === 'string' ? k : '').trim()).filter(k => k.length > 0);
-        // Usar solo las primeras 4–5 palabras clave para la URL (más suele dar 0 resultados en LinkedIn)
-        const keywordsPart = kw.slice(0, 5).join(' ');
-        if (keywordsPart) {
-          searchQuery = searchQuery ? `${searchQuery} ${keywordsPart}` : keywordsPart;
-        }
-      }
       const maxQueryLength = 180;
       if (searchQuery.length > maxQueryLength) {
         searchQuery = searchQuery.substring(0, maxQueryLength).trim();
@@ -865,15 +861,8 @@ class LinkedInScraper {
         console.log('Diagnóstico:', JSON.stringify(diagnostic, null, 2));
       }
 
-      // Priorizar por palabras clave (no excluir): los que coinciden se barren primero, el resto en orden normal
+      // Mantener el orden original de LinkedIn (sin reordenar por keywords)
       let filteredProfiles = profiles;
-      if (filterKeywords && filterKeywords.length > 0 && profiles.length > 0) {
-        filteredProfiles = this.prioritizeProfilesByKeywords(profiles, filterKeywords);
-        const priorityCount = this.filterProfilesByKeywords(profiles, filterKeywords).length;
-        if (priorityCount > 0) {
-          console.log(`  Prioridad: ${priorityCount} de ${profiles.length} perfiles coinciden con las palabras clave (se barren primero)`);
-        }
-      }
 
       // Filtrar por exclusiones si se especifican
       if (exclusionUrls && exclusionUrls.length > 0 && filteredProfiles.length > 0) {
