@@ -746,14 +746,22 @@ class LinkedInScraper {
         for (let pageNum = 2; pageNum <= paginationInfo.totalPages; pageNum++) {
           const start = (pageNum - 1) * paginationInfo.pageSize;
           const pageUrl = `${baseSearchUrl}${separator}start=${start}`;
-          console.log(`Cargando página ${pageNum}/${paginationInfo.totalPages} (start=${start}) — perfiles únicos acumulados: ${profiles.length}/${maxResults}...`);
+
+          console.log(`\n──── Hoja ${pageNum}/${paginationInfo.totalPages} ────`);
+          console.log(`  [1/4] Navegando a la hoja ${pageNum} (start=${start})... (acumulados: ${profiles.length}/${maxResults})`);
           await this.page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
           await this.page.waitForTimeout(4000);
+
+          console.log(`  [2/4] Haciendo scroll para revelar todos los resultados...`);
           await this.page.evaluate(() => { window.scrollTo(0, document.body.scrollHeight / 2); });
           await this.page.waitForTimeout(1500);
           await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
           await this.page.waitForTimeout(1500);
+
+          console.log(`  [3/4] Extrayendo perfiles de la hoja ${pageNum}...`);
           const pageProfiles = await this._extractProfilesFromCurrentPage();
+
+          console.log(`  [4/4] Deduplicando: ${pageProfiles.length} encontrados en esta hoja...`);
           let added = 0;
           for (const p of pageProfiles) {
             const url = (p.urlPerfil || '').trim();
@@ -763,24 +771,29 @@ class LinkedInScraper {
               added++;
             }
           }
-          console.log(`  Página ${pageNum}: ${pageProfiles.length} extraídos, ${added} nuevos únicos (total: ${profiles.length}/${maxResults})`);
+          const duplicates = pageProfiles.length - added;
+          console.log(`  ✔ Hoja ${pageNum} completada: ${added} nuevos únicos, ${duplicates} duplicados descartados → total acumulado: ${profiles.length}/${maxResults}`);
 
           // Parar en cuanto tengamos suficientes perfiles únicos
           if (profiles.length >= maxResults) {
-            console.log(`  ✓ Límite de ${maxResults} perfiles únicos alcanzado en página ${pageNum}. Deteniendo paginación.`);
+            console.log(`\n  ✓ Límite de ${maxResults} perfiles únicos alcanzado en hoja ${pageNum}. Deteniendo paginación.`);
             break;
           }
 
           // Parar si hay demasiadas páginas vacías consecutivas
           if (pageProfiles.length === 0) {
             consecutiveEmptyPages++;
-            console.log(`  ⚠ Página vacía (${consecutiveEmptyPages}/${MAX_EMPTY_PAGES} consecutivas sin resultados)`);
+            console.log(`  ⚠ Hoja vacía (${consecutiveEmptyPages}/${MAX_EMPTY_PAGES} consecutivas sin resultados)`);
             if (consecutiveEmptyPages >= MAX_EMPTY_PAGES) {
-              console.log(`  ✗ ${MAX_EMPTY_PAGES} páginas consecutivas sin perfiles. Deteniendo paginación.`);
+              console.log(`  ✗ ${MAX_EMPTY_PAGES} hojas consecutivas sin perfiles. Deteniendo paginación.`);
               break;
             }
           } else {
             consecutiveEmptyPages = 0;
+            const faltantes = maxResults - profiles.length;
+            if (faltantes > 0) {
+              console.log(`  → Faltan ${faltantes} perfiles para completar el límite. Continuando a hoja ${pageNum + 1}...`);
+            }
           }
         }
       }
