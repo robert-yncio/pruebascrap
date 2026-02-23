@@ -741,6 +741,9 @@ class LinkedInScraper {
       const baseSearchUrl = searchUrl.replace(/\&start=\d+/, '').replace(/\?start=\d+&/, '?').replace(/\?start=\d+$/, '');
       const separator = baseSearchUrl.includes('?') ? '&' : '?';
 
+      const MAX_EMPTY_PAGES = 10; // Detener si no se extrae nada en 10 páginas consecutivas
+      let consecutiveEmptyPages = 0;
+
       for (let pageNum = 2; pageNum <= paginationInfo.totalPages; pageNum++) {
         const start = (pageNum - 1) * paginationInfo.pageSize;
         const pageUrl = `${baseSearchUrl}${separator}start=${start}`;
@@ -764,7 +767,17 @@ class LinkedInScraper {
           }
         }
         console.log(`  Página ${pageNum}: ${pageProfiles.length} extraídos, ${added} nuevos (total acumulado: ${profiles.length})`);
-        if (pageProfiles.length === 0) break;
+
+        if (pageProfiles.length === 0) {
+          consecutiveEmptyPages++;
+          console.log(`  ⚠ Página vacía (${consecutiveEmptyPages}/${MAX_EMPTY_PAGES} consecutivas sin resultados)`);
+          if (consecutiveEmptyPages >= MAX_EMPTY_PAGES) {
+            console.log(`  ✗ Se alcanzaron ${MAX_EMPTY_PAGES} páginas consecutivas sin perfiles. Deteniendo paginación.`);
+            break;
+          }
+        } else {
+          consecutiveEmptyPages = 0;
+        }
       }
 
       console.log(`Perfiles encontrados después de extracción (todas las hojas): ${profiles.length}`);
