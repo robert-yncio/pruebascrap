@@ -269,6 +269,7 @@ class LinkedInScraper {
       });
 
       await this.page.waitForTimeout(2000);
+      await this.takeDebugScreenshot('01_sesion_verificando_feed');
 
       // Verificar si estamos logueados (no en checkpoint/verificación)
       const currentUrl = this.page.url();
@@ -548,6 +549,7 @@ class LinkedInScraper {
       
       if (isLoggedIn || hasSearchBar || hasNavBar) {
         console.log('✓ Login exitoso');
+        await this.takeDebugScreenshot('02_login_exitoso');
         // Guardar cookies después de login exitoso
         await this.saveCookies();
         return true;
@@ -706,8 +708,26 @@ class LinkedInScraper {
 
       // Extraer información de los perfiles (página 1)
       console.log('Extrayendo información de perfiles (página 1)...');
-      let profiles = await this._extractProfilesFromCurrentPage();
-      console.log(`Perfiles encontrados en página 1: ${profiles.length} (necesarios: ${maxResults})`);
+      await this.takeDebugScreenshot('03_busqueda_hoja_01');
+      const rawPage1 = await this._extractProfilesFromCurrentPage();
+
+      // Aplicar exclusiones en hoja 1 antes de contar: los excluidos no cuentan para el límite
+      let profiles = [];
+      const seenUrlsGlobal = new Set();
+      let excludedPage1 = 0;
+      for (const p of rawPage1) {
+        const url = (p.urlPerfil || '').trim();
+        if (url) seenUrlsGlobal.add(url);
+        if (exclusionUrls && exclusionUrls.length > 0 && shouldExcludeProfile(p, exclusionUrls)) {
+          excludedPage1++;
+        } else {
+          profiles.push(p);
+        }
+      }
+      if (excludedPage1 > 0) {
+        console.log(`  Hoja 1: ${excludedPage1} excluidos antes de contar → ${profiles.length} válidos disponibles`);
+      }
+      console.log(`Perfiles válidos en hoja 1: ${profiles.length} (necesarios: ${maxResults})`);
 
       // Detectar paginador
       await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
@@ -728,16 +748,15 @@ class LinkedInScraper {
         if (totalPages === 1 && hasNext) totalPages = 2;
         return { totalPages, pageSize: 10 };
       });
-      const pageSize = profiles.length >= 25 ? 25 : (profiles.length > 0 ? 10 : 10);
+      const pageSize = rawPage1.length >= 25 ? 25 : (rawPage1.length > 0 ? 10 : 10);
       paginationInfo.pageSize = pageSize;
 
       console.log(`Paginador: ${paginationInfo.totalPages} hoja(s) detectada(s).`);
 
-      // Paginar solo si la página 1 no alcanzó el límite requerido
+      // Paginar solo si los perfiles válidos (no excluidos) no alcanzan el límite
       if (profiles.length >= maxResults) {
-        console.log(`Página 1 ya tiene ${profiles.length} perfiles únicos (límite: ${maxResults}). No se necesita paginar.`);
+        console.log(`Hoja 1 ya tiene ${profiles.length} perfiles válidos (límite: ${maxResults}). No se necesita paginar.`);
       } else if (paginationInfo.totalPages > 1) {
-        const seenUrls = new Set(profiles.map(p => (p.urlPerfil || '').trim()).filter(Boolean));
         const baseSearchUrl = searchUrl.replace(/\&start=\d+/, '').replace(/\?start=\d+&/, '?').replace(/\?start=\d+$/, '');
         const separator = baseSearchUrl.includes('?') ? '&' : '?';
         const MAX_EMPTY_PAGES = 10;
@@ -748,7 +767,7 @@ class LinkedInScraper {
           const pageUrl = `${baseSearchUrl}${separator}start=${start}`;
 
           console.log(`\n──── Hoja ${pageNum}/${paginationInfo.totalPages} ────`);
-          console.log(`  [1/4] Navegando a la hoja ${pageNum} (start=${start})... (acumulados: ${profiles.length}/${maxResults})`);
+          console.log(`  [1/4] Navegando a la hoja ${pageNum} (start=${start})... (válidos acumulados: ${profiles.length}/${maxResults})`);
           await this.page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
           await this.page.waitForTimeout(4000);
 
@@ -759,24 +778,32 @@ class LinkedInScraper {
           await this.page.waitForTimeout(1500);
 
           console.log(`  [3/4] Extrayendo perfiles de la hoja ${pageNum}...`);
+          await this.takeDebugScreenshot(`03_busqueda_hoja_${String(pageNum).padStart(2, '0')}`);
           const pageProfiles = await this._extractProfilesFromCurrentPage();
 
-          console.log(`  [4/4] Deduplicando: ${pageProfiles.length} encontrados en esta hoja...`);
+          console.log(`  [4/4] Filtrando duplicados y excluidos: ${pageProfiles.length} encontrados en esta hoja...`);
           let added = 0;
+          let skippedDup = 0;
+          let skippedExcl = 0;
           for (const p of pageProfiles) {
             const url = (p.urlPerfil || '').trim();
-            if (url && !seenUrls.has(url)) {
-              seenUrls.add(url);
-              profiles.push(p);
-              added++;
+            if (url && seenUrlsGlobal.has(url)) {
+              skippedDup++;
+              continue;
             }
+            if (url) seenUrlsGlobal.add(url);
+            if (exclusionUrls && exclusionUrls.length > 0 && shouldExcludeProfile(p, exclusionUrls)) {
+              skippedExcl++;
+              continue;
+            }
+            profiles.push(p);
+            added++;
           }
-          const duplicates = pageProfiles.length - added;
-          console.log(`  ✔ Hoja ${pageNum} completada: ${added} nuevos únicos, ${duplicates} duplicados descartados → total acumulado: ${profiles.length}/${maxResults}`);
+          console.log(`  ✔ Hoja ${pageNum}: ${added} nuevos válidos, ${skippedDup} duplicados, ${skippedExcl} excluidos → válidos acumulados: ${profiles.length}/${maxResults}`);
 
-          // Parar en cuanto tengamos suficientes perfiles únicos
+          // Parar en cuanto tengamos suficientes perfiles válidos (no excluidos)
           if (profiles.length >= maxResults) {
-            console.log(`\n  ✓ Límite de ${maxResults} perfiles únicos alcanzado en hoja ${pageNum}. Deteniendo paginación.`);
+            console.log(`\n  ✓ Límite de ${maxResults} perfiles válidos alcanzado en hoja ${pageNum}. Deteniendo paginación.`);
             break;
           }
 
@@ -792,13 +819,13 @@ class LinkedInScraper {
             consecutiveEmptyPages = 0;
             const faltantes = maxResults - profiles.length;
             if (faltantes > 0) {
-              console.log(`  → Faltan ${faltantes} perfiles para completar el límite. Continuando a hoja ${pageNum + 1}...`);
+              console.log(`  → Faltan ${faltantes} perfiles válidos para completar el límite. Continuando a hoja ${pageNum + 1}...`);
             }
           }
         }
       }
 
-      console.log(`Perfiles encontrados después de extracción (todas las hojas): ${profiles.length}`);
+      console.log(`Perfiles válidos encontrados (todas las hojas): ${profiles.length}`);
       
       // Fallback: si 0 perfiles y la query incluía keywords, reintentar solo con el título del puesto
       if (profiles.length === 0 && titleOnly && searchQuery !== titleOnly) {
@@ -874,16 +901,15 @@ class LinkedInScraper {
         console.log('Diagnóstico:', JSON.stringify(diagnostic, null, 2));
       }
 
-      // Mantener el orden original de LinkedIn (sin reordenar por keywords)
+      // Los perfiles ya vienen filtrados (exclusiones aplicadas durante la recolección).
+      // Este segundo filtro es solo red de seguridad por si algún perfil llegó sin URL para comparar.
       let filteredProfiles = profiles;
-
-      // Filtrar por exclusiones si se especifican
       if (exclusionUrls && exclusionUrls.length > 0 && filteredProfiles.length > 0) {
         const beforeExclusion = filteredProfiles.length;
         filteredProfiles = filteredProfiles.filter(profile => !shouldExcludeProfile(profile, exclusionUrls));
         const excludedCount = beforeExclusion - filteredProfiles.length;
         if (excludedCount > 0) {
-          console.log(`  Excluidos: ${excludedCount} perfiles por estar en la lista de exclusiones`);
+          console.log(`  [red de seguridad] ${excludedCount} perfiles adicionales excluidos en segunda pasada`);
         }
       }
 
@@ -1067,6 +1093,10 @@ class LinkedInScraper {
       });
 
       await this.page.waitForTimeout(3000);
+
+      // Captura de la página del perfil con nombre legible extraído del slug de la URL
+      const profileSlug = (profileUrl.match(/\/in\/([\w-]+)/) || [])[1] || 'perfil';
+      await this.takeDebugScreenshot(`04_perfil_${profileSlug}`);
 
       // Verificar que estamos en la página correcta
       const currentUrl = this.page.url();
