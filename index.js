@@ -711,9 +711,9 @@ class LinkedInScraper {
       // Extraer información de los perfiles (página 1)
       console.log('Extrayendo información de perfiles (página 1)...');
       let profiles = await this._extractProfilesFromCurrentPage();
-      console.log(`Perfiles encontrados en página 1: ${profiles.length}`);
+      console.log(`Perfiles encontrados en página 1: ${profiles.length} (necesarios: ${maxResults})`);
 
-      // Detectar paginador y recorrer resto de hojas
+      // Detectar paginador
       await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await this.page.waitForTimeout(2000);
       const paginationInfo = await this.page.evaluate(() => {
@@ -732,51 +732,60 @@ class LinkedInScraper {
         if (totalPages === 1 && hasNext) totalPages = 2;
         return { totalPages, pageSize: 10 };
       });
-      // LinkedIn puede mostrar 10 o 25 por página; usar el número obtenido en página 1 para no saltar resultados
       const pageSize = profiles.length >= 25 ? 25 : (profiles.length > 0 ? 10 : 10);
       paginationInfo.pageSize = pageSize;
 
       console.log(`Paginador: ${paginationInfo.totalPages} hoja(s) detectada(s).`);
-      const seenUrls = new Set(profiles.map(p => (p.urlPerfil || '').trim()).filter(Boolean));
-      const baseSearchUrl = searchUrl.replace(/\&start=\d+/, '').replace(/\?start=\d+&/, '?').replace(/\?start=\d+$/, '');
-      const separator = baseSearchUrl.includes('?') ? '&' : '?';
 
-      const MAX_EMPTY_PAGES = 10; // Detener si no se extrae nada en 10 páginas consecutivas
-      let consecutiveEmptyPages = 0;
+      // Paginar solo si la página 1 no alcanzó el límite requerido
+      if (profiles.length >= maxResults) {
+        console.log(`Página 1 ya tiene ${profiles.length} perfiles únicos (límite: ${maxResults}). No se necesita paginar.`);
+      } else if (paginationInfo.totalPages > 1) {
+        const seenUrls = new Set(profiles.map(p => (p.urlPerfil || '').trim()).filter(Boolean));
+        const baseSearchUrl = searchUrl.replace(/\&start=\d+/, '').replace(/\?start=\d+&/, '?').replace(/\?start=\d+$/, '');
+        const separator = baseSearchUrl.includes('?') ? '&' : '?';
+        const MAX_EMPTY_PAGES = 10;
+        let consecutiveEmptyPages = 0;
 
-      for (let pageNum = 2; pageNum <= paginationInfo.totalPages; pageNum++) {
-        const start = (pageNum - 1) * paginationInfo.pageSize;
-        const pageUrl = `${baseSearchUrl}${separator}start=${start}`;
-        console.log(`Cargando página ${pageNum}/${paginationInfo.totalPages} (start=${start})...`);
-        await this.page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-        await this.page.waitForTimeout(4000);
-        await this.page.evaluate(() => {
-          window.scrollTo(0, document.body.scrollHeight / 2);
-        });
-        await this.page.waitForTimeout(1500);
-        await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await this.page.waitForTimeout(1500);
-        const pageProfiles = await this._extractProfilesFromCurrentPage();
-        let added = 0;
-        for (const p of pageProfiles) {
-          const url = (p.urlPerfil || '').trim();
-          if (url && !seenUrls.has(url)) {
-            seenUrls.add(url);
-            profiles.push(p);
-            added++;
+        for (let pageNum = 2; pageNum <= paginationInfo.totalPages; pageNum++) {
+          const start = (pageNum - 1) * paginationInfo.pageSize;
+          const pageUrl = `${baseSearchUrl}${separator}start=${start}`;
+          console.log(`Cargando página ${pageNum}/${paginationInfo.totalPages} (start=${start}) — perfiles únicos acumulados: ${profiles.length}/${maxResults}...`);
+          await this.page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+          await this.page.waitForTimeout(4000);
+          await this.page.evaluate(() => { window.scrollTo(0, document.body.scrollHeight / 2); });
+          await this.page.waitForTimeout(1500);
+          await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await this.page.waitForTimeout(1500);
+          const pageProfiles = await this._extractProfilesFromCurrentPage();
+          let added = 0;
+          for (const p of pageProfiles) {
+            const url = (p.urlPerfil || '').trim();
+            if (url && !seenUrls.has(url)) {
+              seenUrls.add(url);
+              profiles.push(p);
+              added++;
+            }
           }
-        }
-        console.log(`  Página ${pageNum}: ${pageProfiles.length} extraídos, ${added} nuevos (total acumulado: ${profiles.length})`);
+          console.log(`  Página ${pageNum}: ${pageProfiles.length} extraídos, ${added} nuevos únicos (total: ${profiles.length}/${maxResults})`);
 
-        if (pageProfiles.length === 0) {
-          consecutiveEmptyPages++;
-          console.log(`  ⚠ Página vacía (${consecutiveEmptyPages}/${MAX_EMPTY_PAGES} consecutivas sin resultados)`);
-          if (consecutiveEmptyPages >= MAX_EMPTY_PAGES) {
-            console.log(`  ✗ Se alcanzaron ${MAX_EMPTY_PAGES} páginas consecutivas sin perfiles. Deteniendo paginación.`);
+          // Parar en cuanto tengamos suficientes perfiles únicos
+          if (profiles.length >= maxResults) {
+            console.log(`  ✓ Límite de ${maxResults} perfiles únicos alcanzado en página ${pageNum}. Deteniendo paginación.`);
             break;
           }
-        } else {
-          consecutiveEmptyPages = 0;
+
+          // Parar si hay demasiadas páginas vacías consecutivas
+          if (pageProfiles.length === 0) {
+            consecutiveEmptyPages++;
+            console.log(`  ⚠ Página vacía (${consecutiveEmptyPages}/${MAX_EMPTY_PAGES} consecutivas sin resultados)`);
+            if (consecutiveEmptyPages >= MAX_EMPTY_PAGES) {
+              console.log(`  ✗ ${MAX_EMPTY_PAGES} páginas consecutivas sin perfiles. Deteniendo paginación.`);
+              break;
+            }
+          } else {
+            consecutiveEmptyPages = 0;
+          }
         }
       }
 
