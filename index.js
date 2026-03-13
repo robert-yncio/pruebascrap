@@ -865,8 +865,22 @@ class LinkedInScraper {
           }
           cards.forEach(card => {
             try {
-              const nameEl = card.querySelector('a[data-view-name="search-result-lockup-title"], .entity-result__title-text a, a[href*="/in/"]');
-              const name = nameEl && nameEl.innerText ? nameEl.innerText.trim() : 'N/A';
+              const isServices = (t) => !t || (typeof t === 'string' && (t.trim().toLowerCase().startsWith('ofrece servicios') || t.trim().toLowerCase().startsWith('services') || (t.split(',').length >= 3 && t.length > 50)));
+              let nameEl = null;
+              const links = card.querySelectorAll('a[data-view-name="search-result-lockup-title"], .entity-result__title-text a, a[href*="/in/"]');
+              for (const el of links) {
+                const text = (el.innerText || '').trim();
+                const aria = (el.getAttribute('aria-label') || '').trim();
+                if (aria && /^Ver perfil de\s+/i.test(aria)) { nameEl = el; break; }
+                if (text.length > 0 && !isServices(text)) { nameEl = el; break; }
+              }
+              if (!nameEl && links.length > 0) nameEl = links[0];
+              let name = nameEl && nameEl.innerText ? nameEl.innerText.trim() : 'N/A';
+              if (isServices(name)) name = 'N/A';
+              if (name === 'N/A' && nameEl) {
+                const ariaLabel = nameEl.getAttribute('aria-label');
+                if (ariaLabel) name = ariaLabel.replace(/^Ver perfil de\s*/i, '').trim();
+              }
               const profileUrl = nameEl && nameEl.href ? nameEl.href.split('?')[0] : '';
               const titleEl = card.querySelector('.entity-result__primary-subtitle, [class*="subtitle"]');
               const title = titleEl ? titleEl.innerText.trim() : 'N/A';
@@ -931,6 +945,9 @@ class LinkedInScraper {
               const details = await this.getProfileDetails(profile.urlPerfil);
               if (details) {
                 profile.detallesCompletos = details;
+                if (details.nombreCompleto && details.nombreCompleto !== 'N/A') profile.nombre = details.nombreCompleto;
+                if (details.headline && details.headline !== 'N/A') profile.titulo = details.headline;
+                if (details.ubicacion && details.ubicacion !== 'N/A') profile.ubicacion = details.ubicacion;
               }
               // Delay entre perfiles para evitar ser bloqueado
               if (i < filteredProfiles.length - 1) {
@@ -989,18 +1006,37 @@ class LinkedInScraper {
       if (!Array.isArray(profileCards)) profileCards = Array.from(profileCards);
       profileCards.forEach((card, index) => {
         try {
+          // Evitar tomar "Ofrece servicios: ..." como nombre: preferir enlace con aria-label "Ver perfil de" o texto que no sea la sección de servicios
+          const isServicesText = (text) => {
+            if (!text || typeof text !== 'string') return false;
+            const t = text.trim().toLowerCase();
+            return t.startsWith('ofrece servicios') || t.startsWith('services') || (t.includes('ofrece servicios') && t.length > 40) || (t.split(',').length >= 3 && t.length > 50);
+          };
           const nameSelectors = ['a[data-view-name="search-result-lockup-title"]', '.entity-result__title-text a', 'a[href*="/in/"][aria-label]', 'a[href*="/in/"]'];
           let nameElement = null;
           for (const sel of nameSelectors) {
-            nameElement = card.querySelector(sel);
-            if (nameElement && nameElement.innerText && nameElement.innerText.trim().length > 0) break;
+            const candidates = card.querySelectorAll(sel);
+            for (const el of candidates) {
+              const text = (el.innerText || '').trim();
+              const ariaLabel = (el.getAttribute('aria-label') || '').trim();
+              if (ariaLabel && /^Ver perfil de\s+/i.test(ariaLabel)) {
+                nameElement = el;
+                break;
+              }
+              if (text.length > 0 && !isServicesText(text)) {
+                nameElement = el;
+                break;
+              }
+            }
+            if (nameElement) break;
           }
-          if (!nameElement || !nameElement.innerText || nameElement.innerText.trim().length === 0) {
+          if (!nameElement) {
             const profileLink = card.querySelector('a[href*="/in/"]:not([href*="/in/feed"])');
             if (profileLink) nameElement = profileLink;
           }
           let name = nameElement && nameElement.innerText ? nameElement.innerText.trim() : 'N/A';
           const profileUrl = nameElement && nameElement.href ? nameElement.href.split('?')[0] : 'N/A';
+          if (isServicesText(name)) name = 'N/A';
           if (name === 'N/A' && profileUrl !== 'N/A' && nameElement) {
             const ariaLabel = nameElement.getAttribute('aria-label');
             if (ariaLabel) {
